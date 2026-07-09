@@ -136,8 +136,16 @@ func (s *Server) allowLoginAttempt(ip string, now time.Time) bool {
 }
 
 func (s *Server) newRouter() *gin.Engine {
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
 	r.Use(s.requestIDMiddleware())
+	// 自定义日志格式：北京时间
+	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		return "[" + param.TimeStamp.In(logger.LocalLoc).Format("2006-01-02 15:04:05") + "] " +
+			"GIN " + param.Method + " " + param.Path + " " +
+			strconv.Itoa(param.StatusCode) + " " + param.Latency.String() + " " +
+			param.ClientIP + "\n"
+	}))
 
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})
@@ -631,9 +639,9 @@ func parseLogLine(line string) logger.LogEntry {
 	}
 
 	timeStr := line[1:timeEnd]
-	// 使用 ParseInLocation 确保日志时间继承系统本地时区，避免被默认解析为 UTC
-	if t, err := time.ParseInLocation("2006-01-02 15:04:05", timeStr, time.Local); err == nil {
-		entry.Time = t.Format(time.RFC3339)
+	// 使用 ParseInLocation 确保日志时间按本地时区解析
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", timeStr, logger.LocalLoc); err == nil {
+		entry.Time = t.Format("2006-01-02T15:04:05")
 	} else {
 		entry.Time = timeStr
 	}

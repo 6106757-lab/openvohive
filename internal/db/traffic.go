@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openvohive/openvohive/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -43,6 +44,9 @@ func GetTrafficAnalysisWithChart(rangeName string, deviceID string, now time.Tim
 		return nil, nil, fmt.Errorf("db not initialized")
 	}
 
+	// 统一转换为本地时区
+	now = now.In(logger.LocalLoc)
+
 	spec, err := newTrafficRangeSpec(rangeName, now)
 	if err != nil {
 		return nil, nil, err
@@ -75,7 +79,7 @@ func GetTrafficAnalysisWithChart(rangeName string, deviceID string, now time.Tim
 	deviceSet := map[string]struct{}{}
 	tempSeries := map[string]map[int]int64{}
 	applyRow := func(r trafficRollupRow) {
-		ps := r.PeriodStart.In(now.Location())
+		ps := r.PeriodStart.In(logger.LocalLoc)
 		if b, ok := bucketAgg[spec.bucketKey(ps)]; ok {
 			if r.Direction {
 				b.TxBytes += r.TrafficBytes
@@ -105,9 +109,10 @@ func GetTrafficAnalysisWithChart(rangeName string, deviceID string, now time.Tim
 		applyRow(r)
 	}
 
+	// 表格倒序：最新时间在上方
 	buckets := make([]TrafficBucket, 0, len(bucketOrder))
-	for _, k := range bucketOrder {
-		buckets = append(buckets, *bucketAgg[k])
+	for i := len(bucketOrder) - 1; i >= 0; i-- {
+		buckets = append(buckets, *bucketAgg[bucketOrder[i]])
 	}
 
 	devices := make([]string, 0, len(deviceSet))
@@ -143,8 +148,10 @@ type trafficRangeSpec struct {
 }
 
 func newTrafficRangeSpec(rangeName string, now time.Time) (trafficRangeSpec, error) {
+	// now 已经是本地时区
 	switch rangeName {
 	case "day":
+		// 从当前时间往回推 24 小时，不含未来
 		return trafficRangeSpec{
 			since:        now.Add(-24 * time.Hour).Truncate(time.Hour),
 			step:         time.Hour,
@@ -188,7 +195,7 @@ func newTrafficRangeSpec(rangeName string, now time.Time) (trafficRangeSpec, err
 }
 
 func startOfTrafficDay(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, logger.LocalLoc)
 }
 
 type trafficRollupRow struct {

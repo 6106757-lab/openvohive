@@ -3,6 +3,7 @@ package logger
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -219,9 +220,100 @@ func filterDeviceFields(fields []zapcore.Field) []zapcore.Field {
 	return out
 }
 
+// LocalLoc 启动时自动检测系统本地时区。
+// 优先使用 Go runtime 检测到的时区；若为 UTC（offset=0），
+// 则尝试读取 OpenWrt 的 /etc/TZ 文件来获取时区偏移。
+var LocalLoc *time.Location
+
+func init() {
+	now := time.Now()
+	_, offset := now.Zone()
+	if offset != 0 {
+		LocalLoc = time.FixedZone(now.Format("MST"), offset)
+		return
+	}
+
+	// Go runtime 返回 UTC，尝试读取 /etc/TZ（OpenWrt 标准时区文件）
+	if tz, err := os.ReadFile("/etc/TZ"); err == nil {
+		LocalLoc = parseTZ(strings.TrimSpace(string(tz)))
+		if LocalLoc != nil {
+			return
+		}
+	}
+
+	// 最终 fallback：UTC
+	LocalLoc = time.UTC
+}
+
+// parseTZ 解析 OpenWrt /etc/TZ 格式的时区字符串。
+// 支持格式：CST-8（即 UTC+8）、EST5EDT 等 POSIX TZ 格式。
+func parseTZ(tz string) *time.Location {
+	tz = strings.TrimSpace(tz)
+	if tz == "" {
+		return nil
+	}
+
+	// 尝试用 Go 标准库解析（需要 zoneinfo，OpenWrt 通常没有）
+	if loc, err := time.LoadLocation(tz); err == nil {
+		return loc
+	}
+
+	// 手动解析 POSIX TZ 格式：如 CST-8 → UTC+8
+	// 格式：STDoffset[DST[offset]]
+	// offset 正数表示 UTC 以西，负数表示 UTC 以东
+	// CST-8 表示 UTC+8（因为 "-8" 表示 UTC 以东 8 小时）
+	// 规则：offset 的符号与直觉相反，POSIX 规定正值为西
+	var name string
+	var offsetHours int
+
+	// 找第一个数字（含正负号）
+	rest := tz
+	for i, c := range tz {
+		if c >= '0' && c <= '9' || c == '-' || c == '+' {
+			name = tz[:i]
+			rest = tz[i:]
+			break
+		}
+	}
+	if name == "" {
+		name = tz
+		rest = ""
+	}
+
+	if rest != "" {
+		// 解析 offset，POSIX 符号相反
+		sign := 1
+		if rest[0] == '-' {
+			sign = 1 // POSIX "-" = UTC 以东
+		} else if rest[0] == '+' {
+			sign = -1 // POSIX "+" = UTC 以西
+		}
+		if len(rest) > 1 {
+			// 去掉符号后解析数字
+			numPart := rest[1:]
+			if len(numPart) > 2 {
+				numPart = numPart[:2] // 只取小时部分
+			}
+			if h, err := strconv.Atoi(numPart); err == nil {
+				offsetHours = sign * h
+			}
+		}
+	}
+
+	offsetSeconds := offsetHours * 3600
+	return time.FixedZone(name, offsetSeconds)
+}
+
+// localTimeEncoder 使用自动检测的本地时区格式化时间
+func localTimeEncoder(layout string) zapcore.TimeEncoder {
+	return func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString("[" + t.In(LocalLoc).Format(layout) + "]")
+	}
+}
+
 func Setup(cfg LogConfig) {
 	consoleEncoderConfig := zap.NewDevelopmentEncoderConfig()
-	consoleEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("[2006-01-02 15:04:05]")
+	consoleEncoderConfig.EncodeTime = localTimeEncoder("2006-01-02 15:04:05")
 	consoleEncoderConfig.EncodeLevel = fixedWidthColorLevelEncoder
 	consoleEncoderConfig.EncodeCaller = func(caller zapcore.EntryCaller, enc zapcore.PrimitiveArrayEncoder) {
 		const width = 28
@@ -234,7 +326,7 @@ func Setup(cfg LogConfig) {
 	consoleEncoderConfig.ConsoleSeparator = " "
 
 	fileEncoderConfig := zap.NewDevelopmentEncoderConfig()
-	fileEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("[2006-01-02 15:04:05]")
+	fileEncoderConfig.EncodeTime = localTimeEncoder("2006-01-02 15:04:05")
 	fileEncoderConfig.EncodeLevel = fixedWidthLevelEncoder
 	fileEncoderConfig.EncodeCaller = func(caller zapcore.EntryCaller, enc zapcore.PrimitiveArrayEncoder) {
 		const width = 28

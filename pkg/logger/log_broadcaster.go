@@ -3,7 +3,6 @@ package logger
 import (
 	"encoding/json"
 	"sync"
-	"time"
 
 	"go.uber.org/zap/zapcore"
 )
@@ -131,7 +130,7 @@ func (c *SSECore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	}
 
 	logEntry := LogEntry{
-		Time:    entry.Time.Format(time.RFC3339),
+		Time:    entry.Time.In(LocalLoc).Format("2006-01-02T15:04:05"),
 		Level:   entry.Level.String(),
 		Caller:  entry.Caller.TrimmedPath(),
 		Message: entry.Message,
