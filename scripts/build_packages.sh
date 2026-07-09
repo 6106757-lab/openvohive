@@ -35,6 +35,7 @@ build_luci_ipk() {
     mkdir -p "$CONTROL_DIR/control"
 
     # control 文件
+    # 注意：依赖只用必定存在的包（libc、luci-base），避免 opkg 因缺依赖拒绝安装
     cat > "$CONTROL_DIR/control/control" <<EOF
 Package: $PKG
 Version: ${PKG_VERSION}-${PKG_RELEASE}
@@ -43,7 +44,7 @@ Section: luci
 Priority: optional
 Maintainer: OpenVoHive <koudejun@live.com>
 Description: LuCI support for Open-VoHive 4G/5G modem manager
-Depends: curl, coreutils, coreutils-stat, coreutils-mkdir
+Depends: libc, luci-base, curl
 Source: https://github.com/6106757-lab/openvohive
 License: Apache-2.0
 EOF
