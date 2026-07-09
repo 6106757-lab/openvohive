@@ -170,18 +170,36 @@ func (p *Pool) configureIPv6LAN(iface string) {
 
 	if currentV6 == "" || !strings.HasPrefix(currentV6, strings.Join(parts[:4], ":")) {
 		// 前缀变了或没有地址，重新分配
+
+		// 关键: 先把 wwan0 的 IPv6 从 /64 收紧为 /128
+		// 避免同一个 /64 同时出现在 wwan0 和 br-lan 导致回程路由冲突
+		wwanAddr := strings.Split(wwanV6, "/")[0]
+		exec.Command("sh", "-c", fmt.Sprintf(
+			"ip -6 addr del %s/64 dev %s 2>/dev/null; "+
+				"ip -6 addr add %s/128 dev %s 2>/dev/null",
+			wwanAddr, iface, wwanAddr, iface)).Run()
+
+		// 更新 br-lan
 		exec.Command("sh", "-c", "ip -6 addr flush dev br-lan scope global 2>/dev/null").Run()
 		exec.Command("sh", "-c", fmt.Sprintf("ip -6 addr add %s dev br-lan 2>/dev/null", lanIP)).Run()
 
-		// 更新 uci 配置
+		// 确保 /64 路由指向 br-lan，并删除可能存在的 unreachable 路由
+		// (vohive_wwan0 的 ip6prefix 会生成 unreachable 路由，需要清除)
 		exec.Command("sh", "-c", fmt.Sprintf(
-			"uci set network.lan.ip6prefix='%s' 2>/dev/null; uci commit network 2>/dev/null",
-			prefix64)).Run()
+			"ip -6 route del unreachable %s 2>/dev/null; "+
+				"ip -6 route replace %s dev br-lan 2>/dev/null",
+			prefix64, prefix64)).Run()
+
+		// 更新 uci 配置（不再写 ip6assign/ip6prefix，避免 unreachable 路由）
+		exec.Command("sh", "-c", fmt.Sprintf(
+			"uci delete network.lan.ip6prefix 2>/dev/null; "+
+				"uci delete network.lan.ip6assign 2>/dev/null; "+
+				"uci commit network 2>/dev/null")).Run()
 
 		// 重启 odhcpd 让 RA 生效
 		exec.Command("sh", "-c", "/etc/init.d/odhcpd restart 2>/dev/null").Run()
 
-		logger.Info(fmt.Sprintf("[netcfg] LAN IPv6 已分配: %s", lanIP))
+		logger.Info(fmt.Sprintf("[netcfg] LAN IPv6 已分配: %s (wwan0 /64→/128)", lanIP))
 	}
 
 	// IPv6 NAT

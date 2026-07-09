@@ -66,12 +66,12 @@ async function handleLogin() {
 
         <div class="text-center mb-10 relative z-10">
           <div class="w-20 h-20 bg-gradient-to-tr from-indigo-500 to-purple-600 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl font-bold shadow-lg shadow-indigo-500/20 mb-6 transform group-hover:scale-105 transition-transform duration-300">
-            VH
+            OV
           </div>
           <h2 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-gray-400">
-            VoHive
+            Open-VoHive
           </h2>
-          <p class="text-gray-500 dark:text-gray-400 text-sm mt-3 tracking-wide">4G 模组管理后台</p>
+          <p class="text-gray-500 dark:text-gray-400 text-sm mt-3 tracking-wide">4G/5G模组管理后台</p>
         </div>
 
         <form @submit.prevent="handleLogin" class="space-y-6 relative z-10">
@@ -116,7 +116,7 @@ async function handleLogin() {
       </div>
       
       <div class="text-center mt-6">
-        <p class="text-gray-500 text-xs">VoHive &copy; 2026</p>
+        <p class="text-gray-500 text-xs">Open-VoHive &copy; 2026</p>
       </div>
     </div>
   </div>

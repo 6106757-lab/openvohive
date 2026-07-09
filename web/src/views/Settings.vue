@@ -289,7 +289,7 @@ onBeforeUnmount(() => {
               <FieldRow label="配置路径" :value="systemInfo.config" monospace copyable />
             </div>
             <div class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg">
-              <FieldRow label="交流群" value="https://t.me/vohive" monospace copyable />
+              <FieldRow label="项目地址" value="https://github.com/6106757-lab/openvohive" monospace copyable />
             </div>
             <div class="ui-panel-muted px-4 py-4">
               <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

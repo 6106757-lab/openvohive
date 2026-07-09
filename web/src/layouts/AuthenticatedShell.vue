@@ -128,9 +128,9 @@ const activePath = computed(() => route.path)
       class="h-full ui-glass transition-[width] duration-200 relative sidebar-shell"
     >
       <div class="h-14 px-4 flex items-center" :class="collapsed ? 'justify-center px-0' : ''">
-        <div class="sidebar-brand-icon">V</div>
+        <div class="sidebar-brand-icon">O</div>
         <div v-if="!collapsed" class="ml-3">
-          <div class="sidebar-brand-title">VoHive</div>
+          <div class="sidebar-brand-title">Open-VoHive</div>
         </div>
       </div>
 
@@ -166,9 +166,9 @@ const activePath = computed(() => route.path)
     <el-drawer v-model="drawerOpen" direction="ltr" size="256px" :with-header="false" class="mobile-drawer">
       <div class="h-full bg-white/95 dark:bg-[#141418]/95 backdrop-blur-md relative sidebar-shell">
         <div class="h-16 px-4 flex items-center">
-          <div class="sidebar-brand-icon">V</div>
+          <div class="sidebar-brand-icon">O</div>
           <div class="ml-3">
-            <div class="sidebar-brand-title">VoHive</div>
+            <div class="sidebar-brand-title">Open-VoHive</div>
           </div>
         </div>
 

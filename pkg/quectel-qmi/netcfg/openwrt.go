@@ -302,7 +302,7 @@ func (o *OpenWrtConfigurator) applyNetifdStatic(name, ifname string, p *owPendin
 	setCmds := [][]string{
 		{"uci", "set", "network." + name + "=interface"},
 		{"uci", "set", "network." + name + ".proto=static"},
-		{"uci", "set", "network." + name + ".ifname=" + ifname},
+		{"uci", "set", "network." + name + ".device=" + ifname},
 		{"uci", "set", "network." + name + ".metric=" + strconv.Itoa(owWANMetric())},
 	}
 	if p.hasV4 {
@@ -328,11 +328,8 @@ func (o *OpenWrtConfigurator) applyNetifdStatic(name, ifname string, p *owPendin
 		)
 		// 用户明确要求 IPv6 不填网关(ip6gw): 默认路由改为 on-link (default dev <iface>),
 		// 在 ifup 之后由 ensureOnLinkRoutes 补。故此处不再写 ip6gw。
-		// 委派前缀(PD)写入 ip6prefix, 由 odhcpd 自动向 LAN 下发该前缀下的 IPv6 地址。
-		if p.pdPrefix != "" {
-			setCmds = append(setCmds, []string{"uci", "set",
-				"network." + name + ".ip6prefix=" + p.pdPrefix + "/" + strconv.Itoa(p.pdPrefixLen)})
-		}
+		// 不写 ip6prefix: 因为 proto=static 时 netifd 会生成 unreachable 路由，
+		// 导致 LAN 客户端 IPv6 不可达。前缀同步由 netcfg_daemon 的 configureIPv6LAN 负责。
 	}
 	// DNS 列表
 	// 注意：不要先 `uci delete network.<name>.dns`！函数开头已经整块删除并重建，
@@ -426,6 +423,44 @@ func (o *OpenWrtConfigurator) ensureOnLinkRoutes(name, ifname string) {
 			log.Printf("[openwrt] V6 on-link 默认路由失败: %v", err)
 		}
 	}
+}
+
+// ensureLanPrefixRoute 从 wwan0 的 IPv6 地址提取 /64 前缀，
+// 确保 br-lan 上有对应地址和路由，使 LAN 客户端能正确获得 IPv6。
+// 仅在 OpenWrt 环境下生效（检测 /etc/config/network）。
+func (o *OpenWrtConfigurator) ensureLanPrefixRoute(ip6 net.IP) error {
+	// 提取 /64 前缀（前 4 组）
+	mask := net.CIDRMask(64, 128)
+	lanPrefix := ip6.Mask(mask)
+
+	// 检查 br-lan 是否已有同前缀地址
+	lanAddr := fmt.Sprintf("%s::1/64", lanPrefix.String()[:strings.LastIndex(lanPrefix.String(), ":")])
+	check := exec.Command("ip", "-6", "addr", "show", "dev", "br-lan", "scope", "global")
+	out, _ := check.CombinedOutput()
+	if strings.Contains(string(out), lanPrefix.String()[:strings.LastIndex(lanPrefix.String(), ":")]) {
+		return nil // 已存在，无需操作
+	}
+
+	// 更新 br-lan 地址
+	delCmd := exec.Command("ip", "-6", "addr", "flush", "dev", "br-lan", "scope", "global")
+	delCmd.Run() // 忽略错误
+
+	addCmd := exec.Command("ip", "-6", "addr", "add", lanAddr, "dev", "br-lan")
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("添加 br-lan IPv6 地址失败: %w: %s", err, string(out))
+	}
+
+	// 确保 /64 前缀路由指向 br-lan
+	routeCmd := exec.Command("ip", "-6", "route", "replace",
+		fmt.Sprintf("%s/64", lanPrefix.String()[:strings.LastIndex(lanPrefix.String(), ":")]),
+		"dev", "br-lan")
+	routeCmd.Run() // 忽略错误
+
+	// 重启 odhcpd 使 LAN 客户端获得新前缀
+	exec.Command("/etc/init.d/odhcpd", "restart").Run()
+
+	log.Printf("[openwrt] br-lan IPv6 前缀已同步: %s", lanAddr)
+	return nil
 }
 
 func addDefaultRouteV4OnLink(ifname string, metric int) error {
@@ -532,7 +567,21 @@ func (o *OpenWrtConfigurator) applyKernelFallback(ifname string, p *owPending) e
 	}
 	if p.hasV6 {
 		ip6 := net.ParseIP(p.v6)
-		if err := o.LinuxConfigurator.SetIPv6Address(ifname, ip6, p.v6Prefix); err != nil {
+
+		// 与 applyNetifdStatic 一致的策略：
+		// 若运营商分配的是 /64 前缀，且该前缀将被下发给 LAN(br-lan)，
+		// 则将 WAN 侧地址收紧为 /128，避免同一个 /64 同时出现在 wwan0
+		// 和 br-lan 导致回程路由冲突(LAN 客户端不可达)。
+		addrLen := p.v6Prefix
+		if p.v6Prefix == 64 {
+			addrLen = 128
+			// 将 /64 前缀路由指向 br-lan，使回程包正确送达 LAN 客户端。
+			if err := o.ensureLanPrefixRoute(ip6); err != nil {
+				log.Printf("[openwrt] 同步 LAN 前缀路由失败: %v", err)
+			}
+		}
+
+		if err := o.LinuxConfigurator.SetIPv6Address(ifname, ip6, addrLen); err != nil {
 			return err
 		}
 		if p.gw6 != "" {
