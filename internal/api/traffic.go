@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/openvohive/openvohive/internal/db"
+	"github.com/openvohive/openvohive/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,7 +17,7 @@ func (s *Server) handleTrafficAnalysis(c *gin.Context) {
 		rng = "day"
 	}
 	deviceID := strings.TrimSpace(c.Query("device_id"))
-	now := time.Now()
+	now := time.Now().In(logger.LocalLoc)
 
 	buckets, chartData, err := db.GetTrafficAnalysisWithChart(rng, deviceID, now)
 	if err != nil {

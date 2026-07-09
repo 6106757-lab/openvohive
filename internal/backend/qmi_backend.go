@@ -458,29 +458,42 @@ func (q *QMIBackend) GetServingSystem(ctx context.Context) (*ServingSystem, erro
 		ss.NetworkMode = "UMTS"
 	case 0x08:
 		ss.NetworkMode = "LTE"
-		if bandInfo, bandErr := q.source.NASGetRFBandInfo(ctx); bandErr == nil {
-			ss.NetworkDuplex = qmi.GetLTEDuplexModeFromBandInfo(bandInfo)
-			ss.RadioBand, ss.RadioChannel = qmiRadioBandAndChannel(bandInfo)
+		// 优先用 CellLocationInfo 的 EARFCN 推算 band（RFBandInfo 的 ActiveBandClass 不是标准 band 号）
+		if cellInfo, cellErr := q.source.NASGetCellLocationInfo(ctx); cellErr == nil {
+			ss.NetworkDuplex = qmi.GetLTEDuplexModeFromCellLocation(cellInfo)
+			if cellInfo.LTE != nil && cellInfo.LTE.EARFCN > 0 {
+				ss.RadioBand = lteBandFromEARFCN(cellInfo.LTE.EARFCN)
+				ss.RadioChannel = uint32(cellInfo.LTE.EARFCN)
+			}
 		}
 		if ss.NetworkDuplex == "" {
-			if cellInfo, cellErr := q.source.NASGetCellLocationInfo(ctx); cellErr == nil {
-				ss.NetworkDuplex = qmi.GetLTEDuplexModeFromCellLocation(cellInfo)
+			if bandInfo, bandErr := q.source.NASGetRFBandInfo(ctx); bandErr == nil {
+				ss.NetworkDuplex = qmi.GetLTEDuplexModeFromBandInfo(bandInfo)
+			}
+		}
+		if ss.RadioBand == "" {
+			if bandInfo, bandErr := q.source.NASGetRFBandInfo(ctx); bandErr == nil {
+				ss.RadioBand, ss.RadioChannel = qmiRadioBandAndChannel(bandInfo)
 			}
 		}
 	case 0x0C:
 		ss.NetworkMode = "NR5G"
-		// NR5G 频段和信道查询（修复：之前缺失此逻辑）
-		if bandInfo, bandErr := q.source.NASGetRFBandInfo(ctx); bandErr == nil {
-			ss.NetworkDuplex = qmi.GetNR5GDuplexModeFromBandInfo(bandInfo)
-			ss.RadioBand, ss.RadioChannel = qmiRadioBandAndChannel(bandInfo)
+		// 优先用 CellLocationInfo 的 NR-ARFCN 推算 band
+		if cellInfo, cellErr := q.source.NASGetCellLocationInfo(ctx); cellErr == nil {
+			ss.NetworkDuplex = qmi.GetNR5GDuplexModeFromCellLocation(cellInfo)
+			if cellInfo.NR5G.HasARFCN {
+				ss.RadioBand = nrBandFromARFCN(cellInfo.NR5G.ARFCN)
+				ss.RadioChannel = cellInfo.NR5G.ARFCN
+			}
+		}
+		if ss.NetworkDuplex == "" {
+			if bandInfo, bandErr := q.source.NASGetRFBandInfo(ctx); bandErr == nil {
+				ss.NetworkDuplex = qmi.GetNR5GDuplexModeFromBandInfo(bandInfo)
+			}
 		}
 		if ss.RadioBand == "" {
-			if cellInfo, cellErr := q.source.NASGetCellLocationInfo(ctx); cellErr == nil {
-				ss.NetworkDuplex = qmi.GetNR5GDuplexModeFromCellLocation(cellInfo)
-				if cellInfo.NR5G.HasARFCN {
-					ss.RadioBand = fmt.Sprintf("NR5G")
-					ss.RadioChannel = cellInfo.NR5G.ARFCN
-				}
+			if bandInfo, bandErr := q.source.NASGetRFBandInfo(ctx); bandErr == nil {
+				ss.RadioBand, ss.RadioChannel = qmiRadioBandAndChannel(bandInfo)
 			}
 		}
 	default:
@@ -518,15 +531,128 @@ func qmiRadioBandAndChannel(info *qmi.RFBandInfo) (string, uint32) {
 	}
 	for _, band := range info.Bands {
 		if band.RadioInterface == 0x08 {
-			return fmt.Sprintf("LTE BAND %d", band.ActiveBandClass), band.ActiveChannel
+			return fmt.Sprintf("LTE B%d", band.ActiveBandClass), band.ActiveChannel
 		}
 	}
+	// NR5G: ActiveBandClass 不是标准 3GPP band 号（如 259≠n41），
+	// 返回空让调用方 fallback 到 CellLocationInfo 的 ARFCN 推算
 	for _, band := range info.Bands {
-		if band.RadioInterface != 0 {
-			return fmt.Sprintf("RAT %d BAND %d", band.RadioInterface, band.ActiveBandClass), band.ActiveChannel
+		switch band.RadioInterface {
+		case 0x04:
+			return fmt.Sprintf("GSM B%d", band.ActiveBandClass), band.ActiveChannel
+		case 0x05:
+			return fmt.Sprintf("WCDMA B%d", band.ActiveBandClass), band.ActiveChannel
+		case 0x0A, 0x0C:
+			// NR5G: 不从这里返回，交给 CellLocationInfo fallback
+			continue
+		default:
+			if band.RadioInterface != 0 {
+				return fmt.Sprintf("RAT %d B%d", band.RadioInterface, band.ActiveBandClass), band.ActiveChannel
+			}
 		}
 	}
 	return "", 0
+}
+
+// nrBandFromARFCN 根据 NR-ARFCN 推算 NR band 号。
+// 基于 3GPP TS 38.104 Table 5.4.2.1-1 (FR1) 和 Table 5.4.2.1-2 (FR2)。
+// lteBandFromEARFCN 根据 LTE EARFCN 推算 band 号。
+// 基于 3GPP TS 36.101 Table 5.7.3-1。
+func lteBandFromEARFCN(earfcn uint16) string {
+	type lteBandRange struct {
+		band  int
+		start uint32
+		end   uint32
+	}
+	bands := []lteBandRange{
+		{1, 0, 599}, {2, 600, 1199}, {3, 1200, 1949},
+		{4, 1950, 2399}, {5, 2400, 2649}, {6, 2650, 2749},
+		{7, 2750, 3449}, {8, 3450, 3799}, {9, 3800, 4149},
+		{10, 4150, 4749}, {11, 4750, 4949}, {12, 5010, 5179},
+		{13, 5180, 5279}, {14, 5280, 5379}, {17, 5730, 5849},
+		{18, 5850, 5999}, {19, 6000, 6149}, {20, 6150, 6449},
+		{21, 6450, 6599}, {22, 6600, 7399}, {23, 7500, 7699},
+		{24, 7700, 8039}, {25, 8040, 8689}, {26, 8690, 9039},
+		{27, 9040, 9209}, {28, 9210, 9659}, {29, 9660, 9769},
+		{30, 9770, 9869}, {31, 9870, 9919}, {32, 9920, 10359},
+		{33, 36000, 36199}, {34, 36200, 36349}, {35, 36350, 36949},
+		{36, 36950, 37549}, {37, 37550, 37749}, {38, 37750, 38249},
+		{39, 38250, 38649}, {40, 38650, 39649}, {41, 39650, 41589},
+		{42, 41590, 43589}, {43, 43590, 45589}, {44, 45590, 46589},
+		{45, 46590, 46789}, {46, 46790, 54539}, {47, 54540, 55239},
+		{48, 55240, 56739}, {49, 56740, 58239}, {50, 58240, 59089},
+		{51, 59090, 59139}, {52, 59140, 60139}, {53, 60140, 60254},
+		{65, 65536, 66435}, {66, 66436, 67335}, {67, 67336, 67535},
+		{68, 67536, 67835}, {69, 67836, 68335}, {70, 68336, 68585},
+		{71, 68586, 68935}, {72, 68936, 68985}, {73, 68986, 69035},
+		{74, 69036, 69465}, {75, 69466, 70315}, {76, 70316, 70365},
+		{85, 70366, 70545}, {87, 70546, 70595}, {88, 70596, 70645},
+	}
+	earfcn32 := uint32(earfcn)
+	for _, b := range bands {
+		if earfcn32 >= b.start && earfcn32 <= b.end {
+			return fmt.Sprintf("LTE B%d", b.band)
+		}
+	}
+	return fmt.Sprintf("LTE (EARFCN %d)", earfcn)
+}
+
+func nrBandFromARFCN(arfcn uint32) string {
+	// FR1 bands: (band, start_arfcn, end_arfcn)
+	fr1Bands := []struct {
+		band  int
+		start uint32
+		end   uint32
+	}{
+		{1, 422000, 434000},
+		{2, 386000, 398000},
+		{3, 361000, 376000},
+		{5, 173800, 178800},
+		{7, 524000, 538000},
+		{8, 185000, 192000},
+		{12, 145800, 149200},
+		{20, 158200, 164200},
+		{25, 386000, 399000},
+		{28, 151600, 160600},
+		{34, 402000, 405000},
+		{38, 514000, 524000},
+		{39, 376000, 384000},
+		{40, 460000, 480000},
+		{41, 499200, 537999},
+		{50, 286400, 303400},
+		{51, 285400, 286400},
+		{66, 422000, 440000},
+		{70, 339000, 342000},
+		{71, 133200, 139600},
+		{74, 295000, 303600},
+		{75, 286400, 303400},
+		{76, 285400, 286400},
+		{77, 620000, 680000},
+		{78, 620000, 653333},
+		{79, 693334, 733333},
+	}
+	for _, b := range fr1Bands {
+		if arfcn >= b.start && arfcn <= b.end {
+			return fmt.Sprintf("NR n%d", b.band)
+		}
+	}
+	// FR2 bands 粗略范围
+	fr2Bands := []struct {
+		band  int
+		start uint32
+		end   uint32
+	}{
+		{257, 2054166, 2104165},
+		{258, 2016667, 2070832},
+		{260, 2229166, 2279165},
+		{261, 2070833, 2084999},
+	}
+	for _, b := range fr2Bands {
+		if arfcn >= b.start && arfcn <= b.end {
+			return fmt.Sprintf("NR n%d", b.band)
+		}
+	}
+	return fmt.Sprintf("NR (ARFCN %d)", arfcn)
 }
 
 func qmiOperatorDisplay(mcc, mnc uint16) string {

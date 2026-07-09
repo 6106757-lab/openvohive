@@ -28,8 +28,8 @@ func (p *Pool) runTrafficAggregation() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
-	// 对齐到整分钟边界
-	time.Sleep(time.Until(time.Now().Add(time.Minute).Truncate(time.Minute)))
+	// 对齐到整分钟边界（本地时区）
+	time.Sleep(time.Until(time.Now().In(logger.LocalLoc).Add(time.Minute).Truncate(time.Minute)))
 
 	for {
 		select {
@@ -53,7 +53,7 @@ func (p *Pool) sampleTraffic() {
 	p.mu.RUnlock()
 
 	now := time.Now()
-	periodStart := now.Truncate(time.Minute)
+	periodStart := now.In(logger.LocalLoc).Truncate(time.Minute)
 
 	logger.Debug(fmt.Sprintf("[traffic] 采样开始 workers=%d time=%s", len(workers), now.Format("15:04:05")))
 
@@ -137,7 +137,7 @@ func readWorkerTraffic(w *Worker) (rx, tx uint64, ok bool) {
 // week/month 读 traffic_day(历史)+traffic_hour(当前)，故只需 hour/day 两级聚合。
 // 每次滚动当前与上一周期（幂等），保证整分钟/整点边界与进程重启后都能补齐。
 func (p *Pool) runRollups() {
-	now := time.Now()
+	now := time.Now().In(logger.LocalLoc)
 
 	// hour 聚合：当前小时 + 上一小时
 	if err := db.RollupToHour(now.Truncate(time.Hour)); err != nil {
@@ -159,7 +159,7 @@ func (p *Pool) runRollups() {
 
 // startOfTrafficDay 取当日起点（本地 00:00）。
 func startOfTrafficDay(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, logger.LocalLoc)
 }
 
 // readWorkerTrafficFromProc 从 /proc/net/dev 读取网卡流量计数器作为 fallback。
