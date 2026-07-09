@@ -30,20 +30,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.24'
 
       - name: Build Frontend
         run: |
           cd web
-          npm install
+          pnpm install --frozen-lockfile
           npx vite build
 
       - name: Build Backend
@@ -52,8 +59,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm || '7' }}
           CGO_ENABLED: 0
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: |
-          go build -o ${{ matrix.artifact }} -ldflags="-s -w" .
+          BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          go build -o ${{ matrix.artifact }} \
+            -ldflags="-s -w -X github.com/openvohive/openvohive/internal/global.Version=${VERSION} -X 'github.com/openvohive/openvohive/internal/global.BuildTime=${BUILD_TIME}'" \
+            .
           file ${{ matrix.artifact }}
           ls -lh ${{ matrix.artifact }}
 
