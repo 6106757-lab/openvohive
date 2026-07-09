@@ -83,15 +83,15 @@ SCRIPT
     echo "2.0" > "$CONTROL_DIR/debian-binary"
 
     cd "$CONTROL_DIR/control"
-    tar czf "$OUTPUT_DIR/${IPK_NAME}.control.tar.gz" ./*
+    tar czpf "$OUTPUT_DIR/${IPK_NAME}.control.tar.gz" ./*
     cd "$CONTROL_DIR"
     rm -rf control
-    tar czf "$OUTPUT_DIR/${IPK_NAME}.data.tar.gz" --exclude=debian-binary ./*
+    tar czpf "$OUTPUT_DIR/${IPK_NAME}.data.tar.gz" --exclude=debian-binary ./*
     rm -f debian-binary
 
     # 最终组合
     cd "$OUTPUT_DIR"
-    tar czf "$IPK_NAME" \
+    tar czpf "$IPK_NAME" \
         --owner=0 --group=0 \
         ./${PKG}_*/debian-binary \
         ./${PKG}_*/control.tar.gz \
@@ -100,7 +100,7 @@ SCRIPT
         echo "2.0" > debian-binary
         cp "${IPK_NAME}.control.tar.gz" control.tar.gz
         cp "${IPK_NAME}.data.tar.gz" data.tar.gz
-        tar czf "$IPK_NAME" debian-binary control.tar.gz data.tar.gz
+        tar czpf "$IPK_NAME" debian-binary control.tar.gz data.tar.gz
         rm -f debian-binary control.tar.gz data.tar.gz
     }
 
@@ -168,14 +168,14 @@ SCRIPT
     echo "2.0" > "$CONTROL_DIR/debian-binary"
 
     cd "$CONTROL_DIR/control"
-    tar czf "$OUTPUT_DIR/${IPK_NAME}.control.tar.gz" ./*
+    tar czpf "$OUTPUT_DIR/${IPK_NAME}.control.tar.gz" ./*
     cd "$CONTROL_DIR"
     rm -rf control
-    tar czf "$OUTPUT_DIR/${IPK_NAME}.data.tar.gz" --exclude=debian-binary ./*
+    tar czpf "$OUTPUT_DIR/${IPK_NAME}.data.tar.gz" --exclude=debian-binary ./*
     rm -f debian-binary
 
     cd "$OUTPUT_DIR"
-    tar czf "$IPK_NAME" \
+    tar czpf "$IPK_NAME" \
         --owner=0 --group=0 \
         ./${PKG}_*/debian-binary \
         ./${PKG}_*/control.tar.gz \
@@ -183,7 +183,7 @@ SCRIPT
         echo "2.0" > debian-binary
         cp "${IPK_NAME}.control.tar.gz" control.tar.gz
         cp "${IPK_NAME}.data.tar.gz" data.tar.gz
-        tar czf "$IPK_NAME" debian-binary control.tar.gz data.tar.gz
+        tar czpf "$IPK_NAME" debian-binary control.tar.gz data.tar.gz
         rm -f debian-binary control.tar.gz data.tar.gz
     }
 
@@ -211,7 +211,7 @@ arch = all
 description = LuCI support for Open-VoHive 4G/5G modem manager
 maintainer = OpenVoHive <koudejun@live.com>
 license = Apache-2.0
-depends = curl coreutils coreutils-stat coreutils-mkdir
+depends = libc luci-base curl
 EOF
 
     # 复制文件树
@@ -226,13 +226,13 @@ arch = all
 description = LuCI support for Open-VoHive 4G/5G modem manager
 maintainer = OpenVoHive <koudejun@live.com>
 license = Apache-2.0
-depends = curl coreutils coreutils-stat coreutils-mkdir
+depends = libc luci-base curl
 EOF
 
-    # 打包为 .apk (tar.gz)
+    # 打包为 .apk (tar.gz)，保留权限
     local APK_NAME="${PKG}_${PKG_VERSION}-${PKG_RELEASE}_all.apk"
     cd "$PKG_DIR"
-    tar czf "$OUTPUT_DIR/$APK_NAME" --owner=0 --group=0 ./
+    tar czpf "$OUTPUT_DIR/$APK_NAME" --owner=0 --group=0 ./
     cd "$OUTPUT_DIR"
     rm -rf "$PKG_DIR"
 
@@ -270,7 +270,7 @@ EOF
 
     local APK_NAME="${PKG}_${PKG_VERSION}-${PKG_RELEASE}_${ARCH}.apk"
     cd "$PKG_DIR"
-    tar czf "$OUTPUT_DIR/$APK_NAME" --owner=0 --group=0 ./
+    tar czpf "$OUTPUT_DIR/$APK_NAME" --owner=0 --group=0 ./
     cd "$OUTPUT_DIR"
     rm -rf "$PKG_DIR"
 
