@@ -1,4 +1,4 @@
-name: Build Multi-Arch Binaries
+name: Build Multi-Arch Binaries & Packages
 
 on:
   push:
@@ -9,6 +9,9 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ============================================================
+  # 构建 Go 二进制 (amd64 / arm64 / armv7)
+  # ============================================================
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
@@ -18,13 +21,16 @@ jobs:
           - goos: linux
             goarch: amd64
             artifact: openvohive-linux-amd64
+            pkg_arch: amd64
           - goos: linux
             goarch: arm64
             artifact: openvohive-linux-arm64
+            pkg_arch: arm64
           - goos: linux
             goarch: arm
             goarm: "7"
             artifact: openvohive-linux-armv7
+            pkg_arch: armv7
 
     steps:
       - name: Checkout
@@ -61,15 +67,62 @@ jobs:
           file ${{ matrix.artifact }}
           ls -lh ${{ matrix.artifact }}
 
-      - name: Upload artifact
+      - name: Build IPK Package
+        run: |
+          mkdir -p dist/binaries
+          cp ${{ matrix.artifact }} dist/binaries/
+          bash scripts/build_packages.sh core-only
+
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
+      - name: Upload IPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openvohive-ipk-${{ matrix.pkg_arch }}
+          path: dist/*.ipk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openvohive-apk-${{ matrix.pkg_arch }}
+          path: dist/*.apk
+
+  # ============================================================
+  # 构建 LuCI 前端包 (noarch，所有架构通用)
+  # ============================================================
+  build-luci:
+    name: Build LuCI Package (noarch)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build LuCI IPK/APK
+        run: |
+          bash scripts/build_packages.sh luci-only
+
+      - name: Upload LuCI IPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-openvohive-ipk
+          path: dist/*.ipk
+
+      - name: Upload LuCI APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-openvohive-apk
+          path: dist/*.apk
+
+  # ============================================================
+  # Release (仅在 tag push 时)
+  # ============================================================
   release:
     name: Create Release
-    needs: build
+    needs: [build, build-luci]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -79,11 +132,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-files
+          find artifacts -type f \( -name "*.ipk" -o -name "*.apk" -o -name "openvohive-linux-*" \) -exec cp {} release-files/ \;
+          ls -lh release-files/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/*
+          files: release-files/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

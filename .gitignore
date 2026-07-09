@@ -1,0 +1,27 @@
+# 编译产物
+/openvohive
+/openvohive-linux-*
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 前端
+web/dist/
+web/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+tmp/
+*.tmp
+/logs/*.log

@@ -1,0 +1,35 @@
+devices:
+    - device_backend: qmi
+      id: rm520n-1
+      modem_imei: "863004060062519"
+      name: RM520N-GL QMI Cellular
+email:
+    enabled: true
+    from_address: 37839499@qq.com
+    password: mmzhnydatfkbbhgf
+    smtp_host: smtp.qq.com
+    smtp_port: 587
+    to_addresses:
+        - koudejun@live.com
+    username: 37839499@qq.com
+server:
+    debug: false
+    port: 7575
+telegram:
+    admin_id: 0
+    base_url: ""
+    bot_token: ""
+    chat_id: 0
+    enabled: false
+    proxy: ""
+web:
+    password: $2a$10$cNdCwdj2xQxk5zU9mO6Jdux/AhH2rnDvMVugadioDWHyVUOQi5HEa
+    username: admin
+webhook:
+    enabled: false
+    headers: {}
+    retry_max: 3
+    secret: ""
+    text_template: '{{device_label}} {{text}}'
+    timeout_ms: 5000
+    urls: []

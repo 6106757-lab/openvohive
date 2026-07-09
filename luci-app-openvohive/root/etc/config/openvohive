@@ -1,0 +1,8 @@
+
+config openvohive 'main'
+	option enabled '1'
+	option bin_path '/opt/openvohive/openvohive'
+	option config_path '/opt/openvohive/config/config.yaml'
+	option data_path '/opt/openvohive/data'
+	option log_path '/opt/openvohive/logs'
+

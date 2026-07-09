@@ -1,0 +1,13 @@
+{
+	"admin/services/openvohive": {
+		"title": "Open-VoHive",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "openvohive/index"
+		},
+		"depends": {
+			"acl": [ "luci-app-openvohive" ]
+		}
+	}
+}

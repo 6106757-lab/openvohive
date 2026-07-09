@@ -1,0 +1,25 @@
+{
+	"luci-app-openvohive": {
+		"description": "Grant access to Open-VoHive LuCI app",
+		"read": {
+			"uci": [ "openvohive" ],
+			"file": {
+				"/usr/share/openvohive/status.sh": [ "exec" ],
+				"/usr/share/openvohive/logs.sh": [ "exec" ],
+				"/usr/share/openvohive/releases.sh": [ "exec" ],
+				"/usr/share/openvohive/task_status.sh": [ "exec" ]
+			}
+		},
+		"write": {
+			"uci": [ "openvohive" ],
+			"file": {
+				"/usr/share/openvohive/service.sh": [ "exec" ],
+				"/usr/share/openvohive/clear_logs.sh": [ "exec" ],
+				"/usr/share/openvohive/install_core.sh": [ "exec" ],
+				"/usr/share/openvohive/task_start.sh": [ "exec" ],
+				"/usr/share/openvohive/task_cancel.sh": [ "exec" ],
+				"/usr/share/openvohive/task_worker.sh": [ "exec" ]
+			}
+		}
+	}
+}
