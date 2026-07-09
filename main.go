@@ -1,0 +1,184 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"log"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/openvohive/openvohive/internal/api"
+	"github.com/openvohive/openvohive/internal/config"
+	"github.com/openvohive/openvohive/internal/db"
+	"github.com/openvohive/openvohive/internal/device"
+	"github.com/openvohive/openvohive/internal/notify"
+
+	"github.com/openvohive/openvohive/pkg/logger"
+	"github.com/openvohive/openvohive/web"
+)
+func main() {
+
+	// Parse flags
+	var configPath string
+	var backendOnly bool
+	flag.StringVar(&configPath, "c", "config/config.yaml", "config file path")
+	flag.BoolVar(&backendOnly, "backend-only", false, "run as backend-only (disable embedded web UI)")
+	flag.Parse()
+
+	if err := config.InitGlobalManager(configPath); err != nil {
+		log.Fatalf("初始化配置管理器失败: %v", err)
+	}
+	cfg := config.GetConfig()
+
+	logger.Setup(logger.LogConfig{
+		Debug:    cfg.Server.Debug,
+		Filename: "logs/app.log",
+	})
+	// 将内置 slog 重定向到已就绪的系统日志框架
+	slog.SetDefault(slog.New(logger.NewSlogHandler(logger.ZapLogger())))
+	logger.Info("VoHive 模组管理器启动中...")
+
+	dbPath := "data/vohive.db"
+	// 解析为相对于可执行文件所在目录的绝对路径，避免依赖启动 cwd
+	// （procd 默认 cwd 为 /root，会导致 data/vohive.db 解析到错误位置而打开失败）。
+	if !filepath.IsAbs(dbPath) {
+		if exe, err := os.Executable(); err == nil {
+			if dir := filepath.Dir(exe); dir != "" {
+				dbPath = filepath.Join(dir, dbPath)
+			}
+		}
+	}
+	// 确保数据库目录存在（db.Init 不会自动创建父目录）。
+	if dir := filepath.Dir(dbPath); dir != "" {
+		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+			log.Fatalf("创建数据库目录失败: %v", mkErr)
+		}
+	}
+	if err := db.Init(dbPath); err != nil {
+		log.Fatalf("初始化数据库失败: %v", err)
+	}
+	dbResolvedPath := dbPath
+	logger.Info("数据库已初始化", "resolved_path", dbResolvedPath)
+
+	go func() {
+		need, err := db.NeedBackfillSMSContacts()
+		if err != nil {
+			logger.Error("短信联系人回填检查失败", "err", err)
+			return
+		}
+		if !need {
+			return
+		}
+		logger.Info("开始短信联系人回填")
+		if err := db.BackfillSMSPeerAndContacts(1000); err != nil {
+			logger.Error("短信联系人回填失败", "err", err)
+			return
+		}
+		logger.Info("短信联系人回填完成")
+	}()
+
+	pool := device.NewPool(cfg)
+
+	// 卡策略：注入 db-backed resolver；一次性把旧 yaml 策略种子进 card_policies。
+	pool.SetPolicyResolver(db.CardPolicyResolver{})
+
+	legacy, err := config.ReadLegacyDevicePoliciesFromYAML(configPath, func(deviceID string) string {
+		return db.CurrentICCIDForDevice(deviceID)
+	})
+	if err == nil {
+		var count int64
+		db.DB.Model(&db.CardPolicy{}).Count(&count)
+		if count == 0 { // 仅当 policy 表为空时迁移
+			n, _ := config.SeedLegacyDevicePolicies(legacy, func(iccid string, p config.LegacyDevicePolicy) error {
+				policy := db.DefaultCardPolicy(iccid)
+				policy.NetworkEnabled = p.NetworkEnabled
+				policy.IPVersion = p.IPVersion
+				policy.APN = p.APN
+				return db.UpsertCardPolicy(policy)
+			})
+			logger.Info("卡策略种子迁移完成", "count", n)
+		}
+	} else {
+		logger.Warn("读取旧 yaml 策略失败，跳过种子迁移", "err", err)
+	}
+
+	notifyMgr, err := notify.NewManager(cfg, pool)
+	if err != nil {
+		logger.Warn("通知管理器初始化异常", "err", err)
+	} else {
+		pool.SetNotifier(notifyMgr)
+	}
+
+
+	_ = pool.StartAll()
+
+	var staticFS http.FileSystem
+	if backendOnly {
+		logger.Info("启用纯后端模式（未挂载前端静态资源）")
+	} else {
+		distFS, err := web.GetFS()
+		if err != nil {
+			log.Fatalf("无法加载嵌入的 Web 文件: %v", err)
+		}
+		staticFS = http.FS(distFS)
+	}
+
+	apiServer := api.New(cfg, pool, staticFS, notifyMgr, configPath)
+
+	apiErrCh := make(chan error, 1)
+	go func() {
+		if err := apiServer.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			apiErrCh <- err
+		}
+	}()
+
+	logger.Info("所有服务已启动")
+
+	quit := make(chan os.Signal, 2)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(quit)
+
+	var sig os.Signal
+	select {
+	case sig = <-quit:
+		logger.Info("收到关闭信号", "signal", sig.String())
+	case err := <-apiErrCh:
+		logger.Error("API 服务器失败", "err", err)
+	}
+	logger.Info("正在优雅关闭所有服务...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	done := make(chan struct{})
+	go func() {
+		if err := apiServer.Shutdown(shutdownCtx); err != nil {
+			logger.Error("关闭 API 服务器时出错", "err", err)
+		}
+
+		if notifyMgr != nil {
+			notifyMgr.Close()
+		}
+
+
+		if err := pool.Shutdown(); err != nil {
+			logger.Error("关闭工作器池时出错", "err", err)
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-quit:
+	case <-time.After(12 * time.Second):
+		logger.Warn("关闭超时，强制退出")
+	}
+
+	logger.Info("再见!")
+}
