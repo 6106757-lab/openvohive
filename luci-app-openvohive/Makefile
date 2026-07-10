@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-openvohive
-PKG_VERSION:=2.0.1
+PKG_VERSION:=2.1.1
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=OpenVoHive <koudejun@live.com>

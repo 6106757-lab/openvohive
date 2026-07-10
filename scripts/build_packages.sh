@@ -7,7 +7,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT_DIR="$REPO_ROOT/dist"
-PKG_VERSION="${PKG_VERSION:-2.0.1}"
+PKG_VERSION="${PKG_VERSION:-2.1.1}"
 PKG_RELEASE="${PKG_RELEASE:-1}"
 
 RED='\033[0;31m'

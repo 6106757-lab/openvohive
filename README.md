@@ -140,7 +140,7 @@ devices:
     - id: rm520n-1       # 设备标识
       name: RM520N-GL    # 显示名称
       device_backend: qmi
-      modem_imei: "863004060062519"  # 模组 IMEI（重要！）
+      modem_imei: "000000000000000"  # 模组 IMEI（留空或占位，按需填写）
 ```
 
 ## 架构
