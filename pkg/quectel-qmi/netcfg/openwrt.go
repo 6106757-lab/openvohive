@@ -195,6 +195,9 @@ func (o *OpenWrtConfigurator) UpdateDNS(dns1, dns2 string) error {
 		return nil
 	}
 	p := o.getPending(o.lastIfname)
+	// 每次 UpdateDNS 都应覆盖而非追加：QMI 重连/IP 轮换后运营商可能下发不同的 DNS，
+	// 不清空会导致旧 DNS 残留累积，UCI 中 dns 列表无限增长。
+	p.dns = nil
 	if dns1 != "" {
 		p.dns = append(p.dns, dns1)
 	}
@@ -390,6 +393,8 @@ func (o *OpenWrtConfigurator) applyNetifdStatic(name, ifname string, p *owPendin
 	}
 
 	// 5) 补 on-link 默认路由（IPv6 不填网关，走 default dev <iface>）。
+	// 启动时 netifd 接口可能短暂抖动（down/up），owIfaceUp 返回 false 导致
+	// 路由被跳过。这里最多同步等待 5 秒直到接口稳定后再补路由。
 	o.ensureOnLinkRoutes(name, ifname)
 
 	log.Printf("[openwrt] netifd 已接管 %s 为静态接口 %s (IPv4=%v, IPv6=%v, metric=%d)",
@@ -401,8 +406,20 @@ func (o *OpenWrtConfigurator) applyNetifdStatic(name, ifname string, p *owPendin
 // (default dev <iface>)。IPv6 用户明确要求不填网关(ip6gw), 故走 on-link。
 // 该路由不在 uci 中持久化, 因此每次 apply 都 ensure 一次(replace 幂等),
 // 以覆盖 reload 重建接口后内核路由丢失的情况。
+//
+// 启动时 netifd 可能抖动导致 owIfaceUp 返回 false。这里改为检查内核接口状态
+// （operstate），只要网口已就绪就直接 ip route replace，不依赖 netifd 瞬时状态。
+// 若内核接口也未就绪，则同步等待最多 5 秒后重试。
 func (o *OpenWrtConfigurator) ensureOnLinkRoutes(name, ifname string) {
-	if !o.owIfaceUp(name) {
+	o.ensureOnLinkRoutesRetry(name, ifname, 0)
+}
+
+func (o *OpenWrtConfigurator) ensureOnLinkRoutesRetry(name, ifname string, attempt int) {
+	if !o.owIfaceUp(name) && !o.kernelIfaceUp(ifname) {
+		if attempt < 5 {
+			time.Sleep(1 * time.Second)
+			o.ensureOnLinkRoutesRetry(name, ifname, attempt+1)
+		}
 		return
 	}
 	o.mu.Lock()
@@ -423,6 +440,16 @@ func (o *OpenWrtConfigurator) ensureOnLinkRoutes(name, ifname string) {
 			log.Printf("[openwrt] V6 on-link 默认路由失败: %v", err)
 		}
 	}
+}
+
+// kernelIfaceUp 检查内核接口是否已就绪（通过 /sys/class/net/<iface>/carrier）。
+// qmi_wwan/MBIM 驱动的 operstate 始终为 "unknown"，因此用 carrier=1 判断。
+func (o *OpenWrtConfigurator) kernelIfaceUp(ifname string) bool {
+	data, err := os.ReadFile("/sys/class/net/" + ifname + "/carrier")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == "1"
 }
 
 // ensureLanPrefixRoute 从 wwan0 的 IPv6 地址提取 /64 前缀，

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,6 +29,14 @@ var ipCheckURLs = []string{
 	"https://ident.me",
 	"https://ifconfig.me/ip",
 	"https://httpbin.org/ip",
+}
+
+// ipv6CheckURLs IPv6 公网探测专用 URL，这些域名保证有 AAAA 记录。
+// api.ipify.org 只有 A 记录，纯 IPv6 探测时会失败，需要补充 IPv6 原生域名。
+var ipv6CheckURLs = []string{
+	"https://api6.ipify.org",
+	"https://ident.me",
+	"https://ifconfig.me/ip",
 }
 
 const (
@@ -897,6 +906,14 @@ func (m *Manager) UpdateIPFamily(enableV4, enableV6 bool) {
 	if m.qmiMgr != nil {
 		m.qmiMgr.SetIPFamily(enableV4, enableV6)
 	}
+	// 同步更新本地 cfg，确保 GetPublicIPv4AndV6NoCache 等上层逻辑使用正确的 IPVersion。
+	if m.cfg.IPVersion == "" || m.cfg.IPVersion == "v4" {
+		if enableV4 && enableV6 {
+			m.cfg.IPVersion = "v4v6"
+		} else if enableV6 {
+			m.cfg.IPVersion = "v6"
+		}
+	}
 }
 
 func (m *Manager) OnHealthEvent(handler func(HealthEvent)) {
@@ -1063,6 +1080,15 @@ func (m *Manager) lookupPublicIPHost(ctx context.Context, host string) ([]string
 	enableV4, enableV6, err := config.ResolveIPFamily(m.cfg.IPVersion)
 	if err != nil {
 		enableV4, enableV6 = true, false
+	}
+	// 公网 IP 探测的 DNS 解析需要同时查询 A 和 AAAA 记录。
+	// 即使配置的 ip_version 是 v4，IPv6 公网探测（GetPublicIPv4AndV6NoCache）仍然需要 AAAA 记录。
+	// 因此这里始终启用双栈 DNS 解析，由上层调用方根据 ipv6BearerUp() 决定是否实际使用 IPv6 结果。
+	if !enableV6 {
+		enableV6 = true
+	}
+	if !enableV4 {
+		enableV4 = true
 	}
 	dnsServers := m.publicIPDNSServers()
 	dialer := m.boundDialer(publicIPDialTimeout)
@@ -2357,6 +2383,11 @@ func (m *Manager) GetPublicIPv4AndV6NoCache() (publicV4 string, publicV6 string)
 	if err != nil {
 		enableV4, enableV6 = true, false
 	}
+	// 如果内核接口上已存在 IPv6 global 地址，说明 IPv6 承载已实际建立，
+	// 此时强制启用 IPv6 公网探测，不受配置 ip_version 限制（卡策略投影可能未及时同步到 m.cfg）。
+	if !enableV6 && m.ipv6BearerUp() {
+		enableV6 = true
+	}
 	// 配置允许 v6 不代表 v6 数据承载真的建立成功（网络可能以 ESM cause #50 等拒绝 v6 PDP）。
 	// 承载未建立时 v6 探测必然失败，跳过它以避免每轮刷新都白白等满超时。
 	if enableV6 && !m.ipv6BearerUp() {
@@ -2378,7 +2409,15 @@ func (m *Manager) GetPublicIPv4AndV6NoCache() (publicV4 string, publicV6 string)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if ip := prober.Probe(context.Background(), netprobe.FamilyV6); ip != "" {
+			// IPv6 探测使用专用 URL 列表，因为 api.ipify.org 只有 A 记录（无 AAAA），
+			// 纯 IPv6 探测时会因 DNS 解析失败而永远无法获取公网 IPv6 地址。
+			ipv6Prober := netprobe.New(netprobe.Config{
+				Interface: m.cfg.Interface,
+				URLs:      ipv6CheckURLs,
+				Timeout:   publicIPRequestTimeout,
+				Lookup:    m.lookupPublicIPHost,
+			})
+			if ip := ipv6Prober.Probe(context.Background(), netprobe.FamilyV6); ip != "" {
 				publicV6 = ip
 			}
 		}()
@@ -2392,7 +2431,26 @@ func (m *Manager) ipv6BearerUp() bool {
 	if m.hasIPv6Bearer != nil {
 		return m.hasIPv6Bearer()
 	}
-	return strings.TrimSpace(m.GetPrivateIPv6()) != ""
+	// 优先用 QMI Settings 中的 IPv6 地址判断
+	if strings.TrimSpace(m.GetPrivateIPv6()) != "" {
+		return true
+	}
+	// Fallback: QMI Settings 可能尚未同步，直接检查内核接口上是否有 global IPv6 地址。
+	// 内核地址由 netcfg 在拨号成功后写入，比 QMI Settings 更及时。
+	if iface := strings.TrimSpace(m.cfg.Interface); iface != "" {
+		return kernelInterfaceHasGlobalIPv6(iface)
+	}
+	return false
+}
+
+// kernelInterfaceHasGlobalIPv6 检查内核接口上是否有 global scope 的 IPv6 地址。
+// 用于 QMI Settings 尚未同步时作为 fallback 判断 IPv6 承载是否已建立。
+func kernelInterfaceHasGlobalIPv6(iface string) bool {
+	out, err := exec.Command("ip", "-6", "addr", "show", "dev", iface, "scope", "global").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return len(out) > 0 && strings.Contains(string(out), "inet6")
 }
 
 func (m *Manager) publicIPProber() *netprobe.Prober {

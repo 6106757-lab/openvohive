@@ -403,6 +403,7 @@ func BuildSubmitTPDUs(to, text string) ([][]byte, []int, error) {
 // BuildSubmitTPDUsWithOptions 编码上行短信为一组 SUBMIT TPDU，并允许调用方指定文本编码策略。
 func BuildSubmitTPDUsWithOptions(to, text string, opts SubmitOptions) ([][]byte, []int, error) {
 	normalizedTo := strings.TrimSpace(to)
+	hasPlus := strings.HasPrefix(normalizedTo, "+")
 	encoding, err := NormalizeSMSEncoding(string(opts.Encoding))
 	if err != nil {
 		return nil, nil, err
@@ -427,9 +428,10 @@ func BuildSubmitTPDUsWithOptions(to, text string, opts SubmitOptions) ([][]byte,
 	var lenList []int
 
 	for _, pdu := range tpdus {
-		// 修复短号码地址类型：库默认将所有号码设为 TonInternational (0x91)，
-		// 但运营商短号码（如 888、10086）应使用 TonUnknown (0x81)
-		if IsShortCode(normalizedTo) {
+		// 修复地址类型：库默认将所有号码设为 TonInternational (0x91)，
+		// 但只有带 + 前缀的号码才是国际格式。
+		// 不带 + 的号码（短号码或国内号码）使用 TonUnknown (0x81)。
+		if !hasPlus {
 			da := pdu.DA
 			da.SetTypeOfNumber(tpdu.TonUnknown)
 			da.SetNumberingPlan(tpdu.NpISDN)

@@ -3,6 +3,7 @@ package device
 import (
 	"strings"
 
+	mbimcore "github.com/openvohive/openvohive/internal/mbim"
 	"github.com/openvohive/openvohive/internal/backend"
 	"github.com/openvohive/openvohive/internal/cardpolicy"
 	"github.com/openvohive/openvohive/internal/config"
@@ -24,11 +25,18 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.SMSEnabled = true // SMS 恒开
 
 	// 同步底层 QMI Manager 的双栈开关
-	// 修复：startup_post_apply 投影策略时也需要同步，否则 IPv6 不生效
 	if w.QMICore != nil {
 		if v4, v6, err := config.ResolveIPFamily(w.Config.IPVersion); err == nil {
 			w.QMICore.UpdateIPFamily(v4, v6)
 		}
+	}
+	// 同步底层 MBIM Manager 的 IP 版本和 APN（策略投影更新后需要通知 MBIM Core）
+	if w.MBIMCore != nil {
+		w.MBIMCore.SetDataConfig(mbimcore.DataConfig{
+			APN:       w.Config.APN,
+			Interface: w.Config.Interface,
+			IPVersion: w.Config.IPVersion,
+		})
 	}
 }
 
@@ -64,6 +72,7 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		p.exitAirplaneModeIfNeeded(worker, reason)
 		if err := p.applyNetworkPreference(worker); err != nil {
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
+			return policyApplyResult{Applied: true, ICCID: iccid, Reason: "network_preference_failed"}
 		}
 	}
 	return policyApplyResult{Applied: true, ICCID: iccid, Reason: reason}

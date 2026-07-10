@@ -25,6 +25,12 @@ var (
 		"https://ifconfig.me/ip",
 		"https://httpbin.org/ip",
 	}
+	// defaultIPv6PublicIPURLs IPv6 公网探测专用 URL，这些域名保证有 AAAA 记录。
+	defaultIPv6PublicIPURLs = []string{
+		"https://api6.ipify.org",
+		"https://ident.me",
+		"https://ifconfig.me/ip",
+	}
 )
 
 const (
@@ -314,41 +320,84 @@ func (m *Manager) GetPublicIPv4AndV6NoCache() (publicV4 string, publicV6 string)
 		publicV4 = prober.Probe(context.Background(), netprobe.FamilyV4)
 	}
 	if enableV6 {
-		publicV6 = prober.Probe(context.Background(), netprobe.FamilyV6)
+		// IPv6 探测使用专用 URL 列表，因为 api.ipify.org 只有 A 记录（无 AAAA）。
+		ipv6URLs := defaultIPv6PublicIPURLs
+		if len(m.publicIPURLs) > 0 {
+			ipv6URLs = append([]string(nil), m.publicIPURLs...)
+		}
+		ipv6Prober := netprobe.New(netprobe.Config{Interface: cfg.Interface, URLs: ipv6URLs, Timeout: 10 * time.Second})
+		publicV6 = ipv6Prober.Probe(context.Background(), netprobe.FamilyV6)
 	}
 	return publicV4, publicV6
 }
 
 func (m *Manager) applyIPConfig(nc netConfigurator, iface string, ipc mbim.IPConfiguration) error {
+	// IPv4: 设置地址
 	if ipc.IPv4Address != "" {
 		if err := nc.SetIPv4(iface, ipc.IPv4Address, int(ipc.IPv4PrefixLength)); err != nil {
 			return err
 		}
 	}
+
+	// IPv6: 设置地址、委派前缀(PD)。路由使用 on-link 方式，与 QMI 行为一致。
 	if ipc.IPv6Address != "" {
 		if err := nc.SetIPv6(iface, ipc.IPv6Address, int(ipc.IPv6PrefixLength)); err != nil {
 			return err
 		}
+		// 委派前缀(PD): 若运营商下发独立 PD 则使用，否则从自身 IPv6 地址提取 /64 前缀。
+		// 写入 netifd ip6prefix 使 odhcpd 可向 LAN 下发 IPv6（OpenWrt 环境）。
+		pdPrefix := ipc.IPv6Address
+		pdLen := 64
+		if err := nc.SetIPv6DelegatedPrefix(iface, pdPrefix, pdLen); err != nil {
+			// 非 OpenWrt 环境此操作无影响，忽略错误。
+			_ = err
+		}
 	}
+
 	if ipc.IPv4MTU > 0 {
 		if err := nc.SetMTU(iface, int(ipc.IPv4MTU)); err != nil {
 			return err
 		}
 	}
-	if err := nc.BringUp(iface); err != nil {
-		return err
+
+	// 路由和 DNS 必须在 BringUp 之前设置，因为 OpenWrtConfigurator 的 BringUp
+	// 会触发 commit → applyNetifdStatic，后者一次性消费 pending 中的所有配置
+	// （IP、gateway、DNS、on-link 意图）写入 uci 并 reload netifd。
+	// 若 BringUp 在前，则 gateway/DNS/on-link 都会被静默丢失。
+
+	// IPv4 默认路由：优先使用运营商下发的网关，无网关时回退 on-link。
+	if ipc.IPv4Address != "" {
+		if ipc.IPv4Gateway != "" {
+			if err := nc.AddDefaultRoute(iface, ipc.IPv4Gateway); err != nil {
+				return err
+			}
+		} else {
+			if err := nc.AddDefaultRouteDirect(iface, false); err != nil {
+				return err
+			}
+		}
 	}
-	if ipc.IPv4Gateway != "" {
-		if err := nc.AddDefaultRoute(iface, ipc.IPv4Gateway); err != nil {
+
+	// IPv6 默认路由：与 QMI 一致，使用 on-link 方式 (default dev <iface>)。
+	// 运营商下发的 IPv6 网关经常是 link-local 或错误值，直接设 ip6gw 会导致不可达。
+	if ipc.IPv6Address != "" {
+		if err := nc.AddDefaultRouteDirect(iface, true); err != nil {
 			return err
 		}
 	}
+
 	dns := append(append([]string{}, ipc.IPv4DNS...), ipc.IPv6DNS...)
 	if len(dns) > 0 {
 		if err := nc.SetDNS(dns); err != nil {
 			return err
 		}
 	}
+
+	// BringUp 必须在所有配置（IP、gateway、DNS、on-link）都写入 pending 之后调用。
+	if err := nc.BringUp(iface); err != nil {
+		return err
+	}
+
 	return nil
 }
 

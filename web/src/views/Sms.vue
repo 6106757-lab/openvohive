@@ -427,6 +427,7 @@ async function fetchThreadLatest(silent = false) {
   const params: SmsThreadQueryParams = { peer: t.peer, limit: 80 }
   if (selectedDevice.value && selectedDevice.value !== 'all') {
     params.device_id = selectedDevice.value
+    params.imsi = t.imsi
   } else {
     params.device_id = 'all'
     params.imsi = t.imsi

@@ -154,7 +154,7 @@ func (m *Manager) DeviceID() string {
 
 func pureQMIBackendConfig(cfg config.DeviceConfig) bool {
 	mode := strings.ToLower(strings.TrimSpace(cfg.DeviceBackend))
-	return mode == "qmi" || mode == "mbim" || (mode == "" && strings.TrimSpace(cfg.ControlDevice) != "")
+	return mode == "qmi" || (mode == "" && strings.TrimSpace(cfg.ControlDevice) != "")
 }
 
 func (m *Manager) pureQMIBackend() bool {

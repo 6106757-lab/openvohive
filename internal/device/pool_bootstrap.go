@@ -546,13 +546,20 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		// 纯 QMI 模式不监听 AT URC；AT 口仅保留给人工 AT 终端。
 	} else if backendMode == backend.BackendMBIM {
 		w.smsMode = smsModeMBIM
+		// MBIM indication 作为备用通知
 		if mbimCore != nil {
 			mbimCore.OnNewSMS(func() {
 				logger.Info(fmt.Sprintf("[%s] 收到 MBIM 短信通知", w.ID))
 				w.handleNewSMSMBIM("indication")
 			})
 		}
-		// 纯 MBIM 模式不监听 AT URC；短信通过 MBIM SMS service 接收。
+		// MBIM 模式下短信收发走 AT 命令（RM520N-GL 的 MBIM SMS_SEND 有兼容性问题）
+		// AT URC 负责实时短信通知
+		m.SetNewSMSHandler(nil)
+		m.SetDisableURCRead(false)
+		m.SetSMSCallback(func(sender, content string, timestamp time.Time) {
+			w.processSMS(sender, content, timestamp)
+		})
 	} else {
 		w.smsMode = smsModeAT
 		m.SetNewSMSHandler(nil)
@@ -661,7 +668,24 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 
 			_, err := p.refreshIdentityAndApplyCardPolicy(worker, "startup_post_apply")
 			if err == nil && worker.CurrentICCID() != "" {
-				return
+				// 身份已就绪，但还需要确认网络连接已建立（applyNetworkPreference 的错误
+				// 在 resolveAndApplyPolicy 中被吞掉，这里需要独立检查网络状态）。
+				nc := worker.NetworkController()
+				if nc != nil && nc.IsConnected() {
+					return
+				}
+				if nc != nil && worker.Config.NetworkEnabled {
+					// 网络未连接但策略要求连接，尝试再次应用网络偏好
+					applyErr := p.applyNetworkPreference(worker)
+					if applyErr == nil && nc.IsConnected() {
+						return
+					}
+					logger.Debug(fmt.Sprintf("[%s] 启动期网络连接尚未建立，稍后重试", worker.ID),
+						"attempt", i+1, "err", applyErr)
+				} else {
+					// 网络未启用或无网络控制器，身份就绪即可
+					return
+				}
 			}
 
 			if i < len(retryDelays)-1 {

@@ -12,15 +12,18 @@ import (
 )
 
 // MBIMBackend implements DeviceBackend over an MBIM modem.
+// SMS 收发走 AT 命令（RM520N-GL MBIM firmware 的 SMS_SEND 有兼容性问题），
+// 其他操作（信号、注册、拨号等）走 MBIM 协议。
 type MBIMBackend struct {
 	source      MBIMSource
 	controlPath string
+	modem       *modem.Manager // AT 通道，用于短信收发
 }
 
 var _ DeviceBackend = (*MBIMBackend)(nil)
 
-func NewMBIMBackend(controlPath string, source MBIMSource) *MBIMBackend {
-	return &MBIMBackend{source: source, controlPath: controlPath}
+func NewMBIMBackend(controlPath string, source MBIMSource, m *modem.Manager) *MBIMBackend {
+	return &MBIMBackend{source: source, controlPath: controlPath, modem: m}
 }
 
 func (b *MBIMBackend) Mode() string { return BackendMBIM }
@@ -275,18 +278,19 @@ func atou16(s string) uint16 {
 }
 
 func mapMBIMRegisterState(s uint32) (int, string) {
+	// 与 QMI 后端保持一致的注册状态文本，确保前端面板统一显示中文。
 	switch s {
-	case 3:
-		return 1, "registered-home"
-	case 4, 5:
-		return 5, "registered-roaming"
-	case 2:
-		return 2, "searching"
-	case 6:
-		return 3, "denied"
-	case 1:
-		return 0, "not-registered"
+	case 3: // MBIM_REGISTER_STATE_HOME
+		return 1, "已注册(本地)"
+	case 4, 5: // MBIM_REGISTER_STATE_ROAMING / MBIM_REGISTER_STATE_PARTNER
+		return 5, "已注册(漫游)"
+	case 2: // MBIM_REGISTER_STATE_SEARCHING
+		return 2, "搜索中"
+	case 6: // MBIM_REGISTER_STATE_DENIED
+		return 3, "注册被拒"
+	case 1: // MBIM_REGISTER_STATE_DEREGISTERED
+		return 0, "未注册"
 	default:
-		return 4, "unknown"
+		return 4, "未知"
 	}
 }

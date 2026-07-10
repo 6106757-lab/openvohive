@@ -12,6 +12,8 @@ type netConfigurator interface {
 	SetMTU(iface string, mtu int) error
 	BringUp(iface string) error
 	AddDefaultRoute(iface, gateway string) error
+	AddDefaultRouteDirect(iface string, ipv6 bool) error
+	SetIPv6DelegatedPrefix(iface, prefix string, prefixLen int) error
 	SetDNS(dns []string) error
 	Flush(iface string) error
 }
@@ -31,6 +33,14 @@ func (realNetConfigurator) BringUp(iface string) error         { return netcfg.B
 
 func (realNetConfigurator) AddDefaultRoute(iface, gateway string) error {
 	return netcfg.AddDefaultRoute(iface, net.ParseIP(gateway))
+}
+
+func (realNetConfigurator) AddDefaultRouteDirect(iface string, ipv6 bool) error {
+	return netcfg.AddDefaultRouteDirect(iface, ipv6)
+}
+
+func (realNetConfigurator) SetIPv6DelegatedPrefix(iface, prefix string, prefixLen int) error {
+	return netcfg.SetIPv6DelegatedPrefix(iface, net.ParseIP(prefix), prefixLen)
 }
 
 func (realNetConfigurator) SetDNS(dns []string) error {

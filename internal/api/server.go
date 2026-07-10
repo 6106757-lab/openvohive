@@ -1029,6 +1029,17 @@ func (s *Server) resolveSMSICCID(deviceID, imsi string) (string, int, string) {
 	if iccid == "" {
 		return "", http.StatusBadRequest, "该设备未识别到 SIM 卡 ICCID"
 	}
+	// 优先使用 sim_cards 表中的 ICCID（与 SaveSMS 入库时一致），
+	// 避免 Worker 实时 ICCID（可能含校验位 F）与数据库记录不匹配。
+	lookupIMSI := imsi
+	if lookupIMSI == "" {
+		lookupIMSI = worker.GetCachedIMSI()
+	}
+	if lookupIMSI != "" {
+		if dbICCID := db.GetICCIDForIMSI(lookupIMSI); dbICCID != "" && !strings.HasPrefix(dbICCID, "imsi:") {
+			return dbICCID, 0, ""
+		}
+	}
 	return iccid, 0, ""
 }
 

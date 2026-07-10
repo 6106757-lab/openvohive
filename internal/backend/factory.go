@@ -68,7 +68,7 @@ func NewBackend(mode, controlPath string, m *modem.Manager, source QMISource, mb
 			return nil, fmt.Errorf("MBIM 模式需要 MBIMSource")
 		}
 		logger.Info("[backend] 使用 MBIM 后端模式", "control_path", controlPath)
-		return NewMBIMBackend(controlPath, mbimSource), nil
+		return NewMBIMBackend(controlPath, mbimSource, m), nil
 
 	default:
 		return nil, fmt.Errorf("不支持的后端模式: %s", mode)
