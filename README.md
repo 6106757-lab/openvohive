@@ -47,7 +47,7 @@ curl -sSL https://raw.githubusercontent.com/6106757-lab/openvohive/master/instal
 
 安装完成后访问 `http://<路由器IP>:7575` 进入 Web 管理界面。
 
-> **默认账号密码**：`admin` / `V0h!ve@2025rt`，请安装后立即修改。
+> **默认账号密码**：`admin` / `V0h!ve@2025rt` / `admin123`，请安装后立即修改。
 
 ## 手动编译
 
