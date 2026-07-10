@@ -46,10 +46,24 @@ else
 	core_arch="$(detect_arch)"
 fi
 
-# 端口状态
 port_status="unknown"
+# 优先从 config.yaml 读取端口（核心实际使用），fallback 到 UCI
+PORT=""
+CONFIG_YAML="/opt/openvohive/config/config.yaml"
+if [ -f "$CONFIG_YAML" ]; then
+	PORT=$(sed -n 's/^[[:space:]]*port:[[:space:]]*//p' "$CONFIG_YAML" 2>/dev/null | head -1)
+	PORT="${PORT:-}"
+fi
+[ -z "$PORT" ] && PORT="$(uci_get server_port '7575')"
+
 if command -v ss >/dev/null 2>&1; then
-	if ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '[:.]7575$'; then
+	if ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$"; then
+		port_status="listening"
+	else
+		port_status="free"
+	fi
+elif command -v netstat >/dev/null 2>&1; then
+	if netstat -tln 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$"; then
 		port_status="listening"
 	else
 		port_status="free"
@@ -85,6 +99,7 @@ printf '"core_installed":%s,' "$core_installed"
 printf '"core_version":"%s",' "$(json_escape "$core_version")"
 printf '"core_arch":"%s",' "$(json_escape "$core_arch")"
 printf '"port_status":"%s",' "$port_status"
+printf '"server_port":"%s",' "$(json_escape "$PORT")"
 printf '"memory_used_kb":%s,' "${memory_used_kb:-0}"
 printf '"memory_total_kb":%s,' "${memory_total_kb:-0}"
 printf '"root_total_kb":%s,' "${root_total_kb:-0}"

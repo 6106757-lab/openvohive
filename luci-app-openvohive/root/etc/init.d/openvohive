@@ -8,6 +8,47 @@ BIN="/opt/openvohive/openvohive"
 CONFIG="/opt/openvohive/config/config.yaml"
 RUNTIME_DIR="/opt/openvohive"
 
+# 生成默认 config.yaml（仅在不存在时）
+generate_default_config() {
+	[ -f "$CONFIG" ] && return 0
+	mkdir -p "$(dirname "$CONFIG")"
+
+	cat > "$CONFIG" <<'YAML'
+server:
+    port: 7575
+    debug: false
+web:
+    username: admin
+    password: $2b$10$9LCdj6OK5XRsKRCbBh9l0eQ7WpjcL1zvctIDxhdtTHRUIVsmOzns.
+devices: []
+email:
+    enabled: false
+    from_address: ""
+    password: ""
+    smtp_host: ""
+    smtp_port: 587
+    to_addresses: []
+    username: ""
+telegram:
+    admin_id: 0
+    base_url: ""
+    bot_token: ""
+    chat_id: 0
+    enabled: false
+    proxy: ""
+webhook:
+    enabled: false
+    headers: {}
+    retry_max: 3
+    secret: ""
+    text_template: "{{device_label}} {{text}}"
+    timeout_ms: 5000
+    urls: []
+YAML
+
+	logger -t openvohive "Generated default config at $CONFIG"
+}
+
 start_service() {
 	local enabled
 
@@ -23,6 +64,9 @@ start_service() {
 		echo "Open-VoHive core is not installed: $BIN"
 		return 1
 	}
+
+	# 生成默认配置（首次安装）
+	generate_default_config
 
 	# 加载 qmi_wwan 驱动
 	modprobe qmi_wwan 2>/dev/null || true

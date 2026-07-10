@@ -300,14 +300,16 @@ return view.extend({
 	// ─── 运行状态 ───
 
 	renderStatus: function(status) {
-		var webUrl = 'http://%s:7575'.format(window.location.hostname);
+		var serverPort = status.server_port || '7575';
+		var webUrl = 'http://%s:%s'.format(window.location.hostname, serverPort);
+		var portLabel = status.port_status == 'listening' ? _('监听中 (:%s)').format(serverPort) : (status.port_status == 'free' ? _('端口空闲') : _('未知'));
 		var rows = [
 			[ _('服务状态'), statusBadge(status.running) ],
 			[ _('开机启用'), status.enabled == '1' ? _('已启用') : _('未启用') ],
 			[ _('核心版本'), status.core_installed ? (status.core_version || _('已安装')) : _('未安装') ],
 			[ _('设备架构'), status.core_arch || _('未知') ],
 			[ _('Web 管理'), status.running ? E('a', { 'href': webUrl, 'target': '_blank' }, 'Open-VoHive Web UI') : _('未运行') ],
-			[ _('端口状态'), status.port_status == 'listening' ? _('监听中 (:7575)') : (status.port_status == 'free' ? _('端口空闲') : _('未知')) ],
+			[ _('端口状态'), portLabel ],
 			[ _('内存占用'), status.running ? memoryText(status.memory_used_kb) : _('未运行') ],
 			[ _('根分区空间'), progressbar(status.root_used_kb, status.root_total_kb, status.root_percent) ],
 			[ _('数据目录空间'), progressbar(status.data_used_kb, status.data_total_kb, status.data_percent) ]
@@ -500,20 +502,18 @@ return view.extend({
 				E('div', { 'data-tab': 'logs', 'data-tab-title': _('日志') }, this.renderLogs(logs))
 			]);
 
-			// 延迟初始化 tab，确保 panes 已被插入 DOM 树
-			// 修复：Cannot read properties of null (reading 'insertBefore')
-			// 原因：render 返回时 panes 还是 detached DOM，parentNode 为 null
-			// LuCI 的 View.__init__ 会在 render() 的 Promise resolve 后将节点插入 DOM
-			// 所以用 setTimeout 0 把 initTabGroup 推迟到下一个事件循环
-			window.setTimeout(function() {
-				ui.tabs.initTabGroup(panes.childNodes);
-			}, 0);
-
-			return E('div', {}, [
+			var root = E('div', {}, [
 				E('h2', {}, _('Open-VoHive')),
 				E('div', { 'class': 'cbi-map-descr' }, _('管理 Open-VoHive 4G/5G 模组管理器。支持服务控制、核心更新、状态监控与日志查看。')),
 				panes
 			]);
+
+			// 延迟初始化 tabs，确保 DOM 已挂载
+			window.setTimeout(function() {
+				ui.tabs.initTabGroup(panes.childNodes);
+			}, 0);
+
+			return root;
 		}.bind(this));
 	}
 });
