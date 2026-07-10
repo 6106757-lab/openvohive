@@ -158,8 +158,10 @@ SCRIPT
     cp "$BINARY" "$CONTROL_DIR/opt/openvohive/openvohive"
     chmod 0755 "$CONTROL_DIR/opt/openvohive/openvohive"
 
-    # 复制配置模板
-    cp "$REPO_ROOT/config/config.yaml" "$CONTROL_DIR/opt/openvohive/config/config.yaml"
+    # 复制配置模板（优先 config.yaml，缺失时回退到干净的 example）
+    local SRC_CFG="$REPO_ROOT/config/config.yaml"
+    [ -f "$SRC_CFG" ] || SRC_CFG="$REPO_ROOT/config/config.example.yaml"
+    cp "$SRC_CFG" "$CONTROL_DIR/opt/openvohive/config/config.yaml"
 
     # 打包
     cd "$OUTPUT_DIR"
@@ -256,7 +258,9 @@ build_core_apk() {
 
     cp "$BINARY" "$PKG_DIR/opt/openvohive/openvohive"
     chmod 0755 "$PKG_DIR/opt/openvohive/openvohive"
-    cp "$REPO_ROOT/config/config.yaml" "$PKG_DIR/opt/openvohive/config/config.yaml"
+    local SRC_CFG="$REPO_ROOT/config/config.yaml"
+    [ -f "$SRC_CFG" ] || SRC_CFG="$REPO_ROOT/config/config.example.yaml"
+    cp "$SRC_CFG" "$PKG_DIR/opt/openvohive/config/config.yaml"
 
     cat > "$PKG_DIR/.pkginfo" <<EOF
 name = $PKG
