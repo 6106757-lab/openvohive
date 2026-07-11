@@ -7,7 +7,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT_DIR="$REPO_ROOT/dist"
-PKG_VERSION="${PKG_VERSION:-2.1.2}"
+PKG_VERSION="${PKG_VERSION:-2.1.3}"
 PKG_RELEASE="${PKG_RELEASE:-1}"
 
 # OpenWrt 标准架构映射: Go 编译架构 -> opkg 架构名
