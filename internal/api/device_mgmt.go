@@ -1338,6 +1338,67 @@ func isTransientATBackend(mode string) bool {
 	return mode == backend.BackendQMI || mode == backend.BackendMBIM
 }
 
+// handleDeviceMgmtPauseAT 暂停 AT 后台检测，释放串口供 Web AT 终端独占使用。
+func (s *Server) handleDeviceMgmtPauseAT(c *gin.Context) {
+	id := deviceIDParam(c)
+	worker := s.pool.GetWorker(id)
+	if worker == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到或未运行"})
+		return
+	}
+	if worker.Modem == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "当前设备没有 AT 管理器"})
+		return
+	}
+	worker.Modem.Pause()
+	logger.Info("AT 后台检测已暂停（Web AT 终端独占）", "device", id)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "paused": true})
+}
+
+// handleDeviceMgmtResumeAT 恢复 AT 后台检测。
+func (s *Server) handleDeviceMgmtResumeAT(c *gin.Context) {
+	id := deviceIDParam(c)
+	worker := s.pool.GetWorker(id)
+	if worker == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到或未运行"})
+		return
+	}
+	if worker.Modem == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "当前设备没有 AT 管理器"})
+		return
+	}
+	worker.Modem.Resume()
+	logger.Info("AT 后台检测已恢复", "device", id)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "paused": false})
+}
+
+// handleDeviceMgmtGetATPauseStatus 查询 AT 暂停状态。
+func (s *Server) handleDeviceMgmtGetATPauseStatus(c *gin.Context) {
+	id := deviceIDParam(c)
+	worker := s.pool.GetWorker(id)
+	if worker == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到或未运行"})
+		return
+	}
+	if worker.Modem == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "当前设备没有 AT 管理器"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "paused": worker.Modem.IsPaused()})
+}
+
+// handleDeviceMgmtGetGlobalATPauseStatus 查询全局是否有设备处于 AT 暂停状态。
+func (s *Server) handleDeviceMgmtGetGlobalATPauseStatus(c *gin.Context) {
+	workers := s.pool.GetAllWorkers()
+	for _, w := range workers {
+		if w.Modem != nil && w.Modem.IsPaused() {
+			c.JSON(http.StatusOK, gin.H{"status": "ok", "paused": true, "device_id": w.ID})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "paused": false})
+}
+
 type setUSBNetModeRequest struct {
 	Mode int `json:"mode"`
 }
@@ -1366,7 +1427,34 @@ func (s *Server) handleDeviceMgmtSetUSBNetMode(c *gin.Context) {
 		return
 	}
 
+	// 根据目标 USBNet 模式自动更新 device_backend，确保模块重启后能自动识别新模式
+	newBackend := usbnetModeToBackend(req.Mode)
+	oldCfg := worker.Config
+	if oldCfg.DeviceBackend != newBackend {
+		oldCfg.DeviceBackend = newBackend
+		if err := config.UpdateDeviceInFile(s.configPath, id, oldCfg); err != nil {
+			logger.Warn("自动更新 device_backend 配置失败", "device", id, "err", err)
+		} else {
+			logger.Info("已根据 USBNet 模式自动更新 device_backend",
+				"device", id,
+				"mode", req.Mode,
+				"new_backend", newBackend)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "指令已发送，设备正在重启..."})
+}
+
+// usbnetModeToBackend 将 Quectel USBNet 模式值映射为后端模式
+func usbnetModeToBackend(mode int) string {
+	switch mode {
+	case 0:
+		return "qmi" // QMI
+	case 2:
+		return "mbim" // MBIM
+	default:
+		return "at" // ECM(1), RNDIS(3) 等使用 AT 后端
+	}
 }
 
 // handleEsimListProfiles 获取 eSIM Profile 列表

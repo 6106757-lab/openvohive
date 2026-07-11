@@ -1,14 +1,21 @@
 #!/bin/bash
 # ============================================================
 # OpenVoHive IPK/APK 打包脚本
-# 为 amd64 / arm64 / armv7 构建 LuCI 前端包和核心包
+# 为 x86_64 / aarch64_generic / armv7 构建 LuCI 前端包和核心包
 # ============================================================
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT_DIR="$REPO_ROOT/dist"
-PKG_VERSION="${PKG_VERSION:-2.1.1}"
+PKG_VERSION="${PKG_VERSION:-2.1.2}"
 PKG_RELEASE="${PKG_RELEASE:-1}"
+
+# OpenWrt 标准架构映射: Go 编译架构 -> opkg 架构名
+# opkg 使用更具体的架构名（如 x86_64, aarch64_generic, arm_cortex-a7）
+declare -A OPKG_ARCH_MAP
+OPKG_ARCH_MAP["amd64"]="x86_64"
+OPKG_ARCH_MAP["arm64"]="aarch64_generic"
+OPKG_ARCH_MAP["armv7"]="arm_cortex-a9"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -112,12 +119,14 @@ SCRIPT
 # 2. 构建 openvohive 核心 IPK (按架构)
 # ============================================================
 build_core_ipk() {
-    local ARCH="$1"      # amd64 / arm64 / armv7
-    local GOARCH="$2"    # amd64 / arm64 / arm
+    local ARCH="$1"      # Go 架构名: amd64 / arm64 / armv7
+    local GOARCH="$2"    # Go GOARCH: amd64 / arm64 / arm
     local GOARM="$3"     # "" / "" / "7"
     local BINARY="$4"    # 预编译好的二进制路径
 
-    log "构建 openvohive IPK ($ARCH)..."
+    local OPKG_ARCH="${OPKG_ARCH_MAP[$ARCH]:-$ARCH}"
+
+    log "构建 openvohive IPK ($ARCH -> opkg: $OPKG_ARCH)..."
 
     local PKG="openvohive"
     local CONTROL_DIR="$OUTPUT_DIR/${PKG}_${PKG_VERSION}-${PKG_RELEASE}_${ARCH}"
@@ -130,15 +139,16 @@ build_core_ipk() {
     mkdir -p "$CONTROL_DIR/opt/openvohive/bin"
 
     # control 文件
+    # 注意：Go CGO_ENABLED=0 编译的纯静态二进制不依赖 libstdcpp，不要添加该依赖
     cat > "$CONTROL_DIR/control/control" <<EOF
 Package: $PKG
 Version: ${PKG_VERSION}-${PKG_RELEASE}
-Architecture: $ARCH
+Architecture: $OPKG_ARCH
 Section: net
 Priority: optional
 Maintainer: OpenVoHive <koudejun@live.com>
-Description: Open-VoHive 4G/5G Modem Manager Core
-Depends: libstdcpp
+Description: Open-VoHive 4G/5G Modem Manager Core (Go static binary)
+Depends: libc
 Source: https://github.com/6106757-lab/openvohive
 License: Apache-2.0
 EOF
@@ -244,8 +254,9 @@ EOF
 build_core_apk() {
     local ARCH="$1"
     local BINARY="$2"
+    local OPKG_ARCH="${OPKG_ARCH_MAP[$ARCH]:-$ARCH}"
 
-    log "构建 openvohive APK ($ARCH)..."
+    log "构建 openvohive APK ($ARCH -> apk: $OPKG_ARCH)..."
 
     local PKG="openvohive"
     local PKG_DIR="$OUTPUT_DIR/${PKG}_${PKG_VERSION}-${PKG_RELEASE}_${ARCH}"
@@ -265,11 +276,11 @@ build_core_apk() {
     cat > "$PKG_DIR/.pkginfo" <<EOF
 name = $PKG
 version = ${PKG_VERSION}-${PKG_RELEASE}
-arch = $ARCH
-description = Open-VoHive 4G/5G Modem Manager Core
+arch = $OPKG_ARCH
+description = Open-VoHive 4G/5G Modem Manager Core (Go static binary)
 maintainer = OpenVoHive <koudejun@live.com>
 license = Apache-2.0
-depends = libstdcpp
+depends = libc
 EOF
 
     local APK_NAME="${PKG}_${PKG_VERSION}-${PKG_RELEASE}_${ARCH}.apk"

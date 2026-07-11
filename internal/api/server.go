@@ -233,6 +233,10 @@ func (s *Server) newRouter() *gin.Engine {
 		api.POST("/devices/:device_id/actions/refresh", s.handleDeviceMgmtRefreshInfo)         // 手动触发刷新设备缓存信息
 		api.POST("/devices/:device_id/actions/reboot", s.handleDeviceMgmtReboot)               // 重启设备模组
 		api.POST("/devices/:device_id/actions/at", s.handleDeviceMgmtExecuteAT)                // 执行 AT 命令
+		api.POST("/devices/:device_id/actions/at/pause", s.handleDeviceMgmtPauseAT)            // 暂停 AT 后台检测
+		api.POST("/devices/:device_id/actions/at/resume", s.handleDeviceMgmtResumeAT)          // 恢复 AT 后台检测
+		api.GET("/devices/:device_id/actions/at/pause", s.handleDeviceMgmtGetATPauseStatus)    // 查询 AT 暂停状态
+		api.GET("/devices/actions/at/pause-status", s.handleDeviceMgmtGetGlobalATPauseStatus)  // 全局查询 AT 暂停状态
 		api.POST("/devices/:device_id/actions/ussd", s.handleDeviceMgmtExecuteUSSD)            // 执行 USSD 指令
 		api.POST("/devices/:device_id/actions/ussd/continue", s.handleDeviceMgmtContinueUSSD)  // USSD 续轮输入（多轮交互）
 		api.POST("/devices/:device_id/actions/ussd/cancel", s.handleDeviceMgmtCancelUSSD)      // 取消 USSD 会话

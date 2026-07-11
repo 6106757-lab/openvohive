@@ -1228,9 +1228,14 @@ func (p *Pool) collectRescanHardware(discovered []QMIDevice, liveWorkerIndex Wor
 		})
 	}
 
+	// 当 QMI 扫描为空或需要兼容发现时，执行全量 sysfs 扫描以发现 MBIM/AT 模式设备
 	managed := config.ListDevices()
-	if configuredDevicesNeedCompatibleATDiscovery(managed) {
-		if compatList, err := DiscoverCompatibleModemsFromQMI(discovered); err == nil {
+	needCompat := configuredDevicesNeedCompatibleATDiscovery(managed) || len(discovered) == 0
+
+	if needCompat {
+		// 优先使用全量兼容发现（覆盖 QMI + MBIM + AT），而不是仅基于 QMI 结果的聚合
+		compatList, err := DiscoverCompatibleModems()
+		if err == nil {
 			seen := map[string]bool{}
 			for _, hw := range hardware {
 				if k := config.NormalizeIMEI(hw.IMEI); k != "" {
@@ -1240,6 +1245,10 @@ func (p *Pool) collectRescanHardware(discovered []QMIDevice, liveWorkerIndex Wor
 			for _, raw := range compatList {
 				m, imei := resolveDiscoveredCompatibleModemFn(raw, 1200*time.Millisecond)
 				if config.NormalizeIMEI(imei) == "" {
+					// 即使 IMEI 探测失败也保留硬件（用于 legacy path match）
+					if strings.TrimSpace(m.ControlPath) != "" || strings.TrimSpace(m.NetInterface) != "" {
+						hardware = append(hardware, m)
+					}
 					continue
 				}
 				if seen[config.NormalizeIMEI(imei)] {
@@ -1248,6 +1257,8 @@ func (p *Pool) collectRescanHardware(discovered []QMIDevice, liveWorkerIndex Wor
 				m.IMEI = imei
 				hardware = append(hardware, m)
 			}
+		} else {
+			logger.Warn("兼容硬件扫描失败", "err", err)
 		}
 	}
 	return hardware
@@ -1273,7 +1284,32 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 		md := pair.Config
 
 		hw := pair.Hardware
+		// 优先根据硬件实际发现的模式决定后端类型，而非仅依赖配置。
+		// 这解决了用户通过 AT 命令手动切换 USBNet 模式后，配置中的 device_backend 与实际硬件不一致的问题。
+		hwMode := strings.ToLower(strings.TrimSpace(hw.Mode))
 		useQMI := requiresQMICore(md)
+		if hwMode == "qmi" {
+			useQMI = true
+		} else if hwMode == "mbim" {
+			useQMI = false
+		}
+		// 如果硬件模式与配置中的 device_backend 不一致，自动更新配置
+		detectedBackend := hwMode
+		if detectedBackend != "qmi" && detectedBackend != "mbim" {
+			detectedBackend = "at"
+		}
+		if md.DeviceBackend != detectedBackend && (detectedBackend == "qmi" || detectedBackend == "mbim") {
+			logger.Info("检测到设备后端模式变化，自动更新配置",
+				"device", md.ID,
+				"old_backend", md.DeviceBackend,
+				"new_backend", detectedBackend)
+			md.DeviceBackend = detectedBackend
+			if err := config.UpdateDeviceInFile(config.GetConfigPath(), md.ID, md); err != nil {
+				logger.Warn("自动更新 device_backend 配置失败", "device", md.ID, "err", err)
+			} else {
+				config.ReloadFromFile()
+			}
+		}
 		worker := p.GetWorker(md.ID)
 
 		if pair.BackfillIMEI != "" {
@@ -1563,14 +1599,31 @@ func (p *Pool) SetWorkerNetworkPolicy(deviceID string, networkEnabled bool, ipVe
 	if strings.TrimSpace(ipVersion) != "" {
 		w.Config.IPVersion = strings.TrimSpace(ipVersion)
 		// 同步底层 QMI Manager 的双栈开关，使运行时切换 ip_version 立即生效
-		// （否则 IPv6 数据呼叫不会发起，表现为“只有 IPv4”）。
+		// （否则 IPv6 数据呼叫不会发起，表现为"只有 IPv4"）。
 		if v4, v6, err := config.ResolveIPFamily(w.Config.IPVersion); err == nil {
 			if w.QMICore != nil {
 				w.QMICore.UpdateIPFamily(v4, v6)
 			}
 		}
+		// 同步底层 MBIM Manager 的 IP 版本和 APN，使运行时切换 ip_version 立即生效
+		// （否则 MBIM 连接仍使用旧 DataConfig，表现为 IP 类型不受控）。
+		if w.MBIMCore != nil {
+			w.MBIMCore.SetDataConfig(mbimcore.DataConfig{
+				APN:       w.Config.APN,
+				Interface: w.Config.Interface,
+				IPVersion: w.Config.IPVersion,
+			})
+		}
 	}
 	w.Config.APN = strings.TrimSpace(apn)
+	// 当仅 APN 变更（ipVersion 可能为空）时，也需要同步 MBIM DataConfig
+	if strings.TrimSpace(ipVersion) == "" && strings.TrimSpace(apn) != "" && w.MBIMCore != nil {
+		w.MBIMCore.SetDataConfig(mbimcore.DataConfig{
+			APN:       w.Config.APN,
+			Interface: w.Config.Interface,
+			IPVersion: w.Config.IPVersion,
+		})
+	}
 	return w
 }
 

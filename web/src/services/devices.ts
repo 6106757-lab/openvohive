@@ -239,6 +239,31 @@ export const devicesService = {
       }
     })
   },
+  pauseAT(id: string) {
+    return callService(async () => {
+      const res = await api.post<{ paused: boolean }>(`/devices/${id}/actions/at/pause`)
+      return res.data?.paused === true
+    })
+  },
+  resumeAT(id: string) {
+    return callService(async () => {
+      const res = await api.post<{ paused: boolean }>(`/devices/${id}/actions/at/resume`)
+      return res.data?.paused === false
+    })
+  },
+  getATPauseStatus(id: string) {
+    return callService(async () => {
+      const res = await api.get<{ paused: boolean }>(`/devices/${id}/actions/at/pause`)
+      return res.data?.paused === true
+    })
+  },
+  /** 查询全局是否有设备处于 AT 暂停状态 */
+  getAnyATPausedDevice() {
+    return callService(async () => {
+      const res = await api.get<{ paused: boolean; device_id: string }>('/devices/actions/at/pause-status')
+      return { paused: res.data?.paused === true, device_id: res.data?.device_id || '' }
+    })
+  },
   sendUSSD(id: string, payload: { command: string; timeout_ms: number }, timeoutMs: number) {
     return callService(async () => {
       const res = await api.post<UssdResponse>(`/devices/${id}/actions/ussd`, payload, {

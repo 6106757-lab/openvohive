@@ -7,13 +7,15 @@ import LoadingScreen from '../components/LoadingScreen.vue'
 import ErrorBoundary from '../components/ErrorBoundary.vue'
 import SwitchDark from '../components/SwitchDark.vue'
 import { debugCollector } from '../debug/collector'
+import { devicesService } from '../services/devices'
 import {
   Mail24Regular,
   Settings24Regular,
   SignOut24Regular,
   Board24Regular,
   Phone24Regular,
-  DocumentText24Regular
+  DocumentText24Regular,
+  Warning24Regular
 } from '@vicons/fluent'
 
 defineProps({
@@ -118,6 +120,77 @@ watch(
 )
 
 const activePath = computed(() => route.path)
+
+// ===== 全局 AT 暂停状态检测与悬浮提示 =====
+const showATPauseFloat = ref(false)
+const atPauseFloatX = ref(0)
+const atPauseFloatY = ref(0)
+const atPauseDeviceId = ref('')
+let atPausePollTimer: ReturnType<typeof setInterval> | null = null
+let atPauseDrag = false
+let atPauseDragSX = 0, atPauseDragSY = 0, atPauseDragFX = 0, atPauseDragFY = 0
+
+// 轮询检查是否有设备处于 AT 暂停状态
+async function checkATPauseGlobal() {
+  // 当前在 AT 终端页面内，已有顶部提示条，不显示全局悬浮卡片
+  if (route.path.startsWith('/devices')) {
+    showATPauseFloat.value = false
+    return
+  }
+  try {
+    const result = await devicesService.getAnyATPausedDevice()
+    if (result.ok && result.data && result.data.paused) {
+      atPauseDeviceId.value = result.data.device_id || ''
+      if (!showATPauseFloat.value) {
+        // 首次出现，定位到右下角
+        atPauseFloatX.value = window.innerWidth - 340
+        atPauseFloatY.value = Math.max(80, window.innerHeight - 200)
+      }
+      showATPauseFloat.value = true
+    } else {
+      showATPauseFloat.value = false
+    }
+  } catch { /* 忽略 */ }
+}
+
+async function resumeATFromFloat() {
+  if (!atPauseDeviceId.value) return
+  try {
+    const result = await devicesService.resumeAT(atPauseDeviceId.value)
+    if (result.ok) {
+      showATPauseFloat.value = false
+    }
+  } catch { /* 忽略 */ }
+}
+
+function onATPauseFloatMouseDown(e: MouseEvent) {
+  if ((e.target as HTMLElement).tagName === 'BUTTON') return
+  atPauseDrag = true
+  atPauseDragSX = e.clientX; atPauseDragSY = e.clientY
+  atPauseDragFX = atPauseFloatX.value; atPauseDragFY = atPauseFloatY.value
+  document.addEventListener('mousemove', onATPauseFloatMouseMove)
+  document.addEventListener('mouseup', onATPauseFloatMouseUp)
+}
+function onATPauseFloatMouseMove(e: MouseEvent) {
+  if (!atPauseDrag) return
+  atPauseFloatX.value = atPauseDragFX + (e.clientX - atPauseDragSX)
+  atPauseFloatY.value = atPauseDragFY + (e.clientY - atPauseDragSY)
+}
+function onATPauseFloatMouseUp() {
+  atPauseDrag = false
+  document.removeEventListener('mousemove', onATPauseFloatMouseMove)
+  document.removeEventListener('mouseup', onATPauseFloatMouseUp)
+}
+
+onMounted(() => {
+  // 启动时立即检查一次，然后每 5 秒轮询
+  checkATPauseGlobal()
+  atPausePollTimer = setInterval(checkATPauseGlobal, 5000)
+})
+
+onUnmounted(() => {
+  if (atPausePollTimer) { clearInterval(atPausePollTimer); atPausePollTimer = null }
+})
 </script>
 
 <template>
@@ -238,6 +311,36 @@ const activePath = computed(() => route.path)
     </el-container>
 
     <DebugPanel v-model="debugOpen" />
+
+    <!-- 全局 AT 暂停悬浮提示（可拖动） -->
+    <Teleport to="body">
+      <div
+        v-if="showATPauseFloat"
+        class="fixed z-[9999] select-none"
+        :style="{ left: atPauseFloatX + 'px', top: atPauseFloatY + 'px' }"
+      >
+        <div
+          class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-amber-200 dark:border-amber-700 p-4 w-[310px] cursor-move"
+          @mousedown="onATPauseFloatMouseDown"
+        >
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <el-icon size="16" class="text-amber-600"><Warning24Regular /></el-icon>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold text-gray-800 dark:text-gray-100">后台检测已暂停</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
+                AT 后台检测处于暂停状态，短信、信号检测等功能暂不可用。
+              </div>
+              <div class="flex gap-2 mt-3">
+                <el-button size="small" type="primary" @click.stop="resumeATFromFloat">立即恢复</el-button>
+                <el-button size="small" @click.stop="showATPauseFloat = false">忽略</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </el-container>
 </template>
 

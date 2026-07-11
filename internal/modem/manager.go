@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -76,7 +77,8 @@ type Manager struct {
 	busy     bool
 	busyMu   sync.Mutex
 	healthy  bool
-	eofCount int // readLoop 中连续 EOF 计数，用于检测设备断开
+	paused   atomic.Bool // AT 后台检测暂停标志（Web AT 终端使用时暂停，避免串口冲突）
+	eofCount int         // readLoop 中连续 EOF 计数，用于检测设备断开
 
 	atTimeoutMu     sync.Mutex
 	atTimeoutStreak int
@@ -605,6 +607,24 @@ func (m *Manager) runLoop() {
 	go m.initModem()
 
 	for {
+		// 暂停状态：丢弃命令队列中的请求，仅处理 stop 信号
+		if m.IsPaused() {
+			select {
+			case <-m.stop:
+				logger.Info(fmt.Sprintf("[%s] AT 管理器已停止", m.cfg.ID))
+				return
+			case req := <-m.cmdChanHigh:
+				// 暂停时拒绝高优先级命令
+				req.errChan <- errors.New("AT 管理器已暂停")
+			case req := <-m.cmdChan:
+				// 暂停时拒绝普通命令
+				req.errChan <- errors.New("AT 管理器已暂停")
+			case <-time.After(100 * time.Millisecond):
+				// 空闲等待
+			}
+			continue
+		}
+
 		// 优先级调度逻辑
 		select {
 		case <-m.stop:
@@ -762,6 +782,12 @@ func (m *Manager) readLoop() {
 		case <-m.stop:
 			return
 		default:
+		}
+
+		// 暂停状态：不读取串口数据，短暂休眠后继续检查状态
+		if m.IsPaused() {
+			time.Sleep(200 * time.Millisecond)
+			continue
 		}
 
 		n, err := m.port.Read(buf)
@@ -1714,6 +1740,10 @@ func (m *Manager) executeAT(cmd string, timeout time.Duration, silent, highPrior
 	if !m.healthy {
 		return "", errors.New("设备异常")
 	}
+	// 暂停状态下快速拒绝，避免调用方等待超时
+	if m.IsPaused() {
+		return "", errors.New("AT 管理器已暂停（Web AT 终端独占中）")
+	}
 
 	// 从池中获取请求对象
 	req := m.reqPool.Get().(*commandRequest)
@@ -1787,6 +1817,23 @@ func (m *Manager) IsBusy() bool {
 // IsHealthy 返回健康状态
 func (m *Manager) IsHealthy() bool {
 	return m.healthy && m.running
+}
+
+// Pause 暂停后台 AT 检测（Web AT 终端使用前调用，避免串口冲突）。
+// 暂停期间 readLoop 停止读取串口数据，runLoop 停止处理命令队列。
+// 不会关闭串口，不会触发断线回调。
+func (m *Manager) Pause() {
+	m.paused.Store(true)
+}
+
+// Resume 恢复后台 AT 检测（Web AT 终端使用完毕后调用）。
+func (m *Manager) Resume() {
+	m.paused.Store(false)
+}
+
+// IsPaused 查询当前是否处于暂停状态。
+func (m *Manager) IsPaused() bool {
+	return m.paused.Load()
 }
 
 // HasATPort 返回当前管理器是否配置了可用的 AT 端口。
