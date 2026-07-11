@@ -1,8 +1,4 @@
-devices:
-    - device_backend: qmi
-      id: rm520n-1
-      modem_imei: ""
-      name: RM520N-GL QMI Cellular
+devices: []
 email:
     enabled: false
     from_address: ""

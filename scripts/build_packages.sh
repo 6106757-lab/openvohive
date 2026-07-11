@@ -82,6 +82,10 @@ SCRIPT
     # 复制文件
     cp -a "$LUCI_DIR/root/." "$CONTROL_DIR/"
 
+    # 删除 config.yaml，避免安装/升级时覆盖用户已有配置
+    # config.yaml 由 init.d 脚本在首次启动时自动生成 (generate_default_config)
+    rm -f "$CONTROL_DIR/opt/openvohive/config/config.yaml"
+
     # 打包 IPK (tar.gz 格式)
     cd "$OUTPUT_DIR"
     local IPK_NAME="${PKG}_${PKG_VERSION}-${PKG_RELEASE}_all.ipk"
@@ -226,6 +230,9 @@ EOF
     # 复制文件树
     cp -a "$LUCI_DIR/root/." "$PKG_DIR/"
     rm -f "$PKG_DIR/.pkginfo"  # 确保 .pkginfo 不在 root 里
+
+    # 删除 config.yaml，避免安装/升级时覆盖用户已有配置
+    rm -f "$PKG_DIR/opt/openvohive/config/config.yaml"
 
     # 重新写 .pkginfo
     cat > "$PKG_DIR/.pkginfo" <<EOF
