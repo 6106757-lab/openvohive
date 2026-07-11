@@ -53,14 +53,14 @@ func NormalizeMBIMTransport(in string) string {
 }
 
 // ResolveIPFamily parses DeviceConfig.IPVersion into IPv4/IPv6 enable flags.
-// Empty input preserves the legacy IPv4-only behavior.
+// Empty input defaults to dual-stack (v4v6) to maximize connectivity.
 func ResolveIPFamily(in string) (enableV4 bool, enableV6 bool, err error) {
 	switch strings.ToLower(strings.TrimSpace(in)) {
-	case "", "v4", "ipv4":
+	case "v4", "ipv4":
 		return true, false, nil
 	case "v6", "ipv6":
 		return false, true, nil
-	case "v4v6", "v6v4", "dual", "ipv4v6":
+	case "", "v4v6", "v6v4", "dual", "ipv4v6":
 		return true, true, nil
 	default:
 		return false, false, fmt.Errorf("无效的 ip_version: %q (允许 v4|v6|v4v6)", in)

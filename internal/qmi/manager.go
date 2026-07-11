@@ -907,7 +907,8 @@ func (m *Manager) UpdateIPFamily(enableV4, enableV6 bool) {
 		m.qmiMgr.SetIPFamily(enableV4, enableV6)
 	}
 	// 同步更新本地 cfg，确保 GetPublicIPv4AndV6NoCache 等上层逻辑使用正确的 IPVersion。
-	if m.cfg.IPVersion == "" || m.cfg.IPVersion == "v4" {
+	// 仅当 cfg.IPVersion 为旧版单栈默认值(v4)或空值时从 enable flags 反推。
+	if m.cfg.IPVersion == "" || m.cfg.IPVersion == "v4" || m.cfg.IPVersion == "v6" {
 		if enableV4 && enableV6 {
 			m.cfg.IPVersion = "v4v6"
 		} else if enableV6 {

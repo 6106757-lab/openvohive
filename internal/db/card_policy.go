@@ -23,19 +23,20 @@ type CardPolicy struct {
 
 func (CardPolicy) TableName() string { return "card_policies" }
 
-// DefaultCardPolicy 是新卡自动建档用的硬编码安全默认（不落配置文件）。
+// DefaultCardPolicy 是新卡自动建档用的安全默认（不落配置文件）。
+// IPVersion 默认为 v4v6（双栈），以便在新网络环境下同时获取 IPv4 和 IPv6 地址。
 func DefaultCardPolicy(iccid string) CardPolicy {
 	return CardPolicy{
 		ICCID:           strings.TrimSpace(iccid),
 		NetworkEnabled:  false,
 		AirplaneEnabled: false,
-		IPVersion:       "v4",
+		IPVersion:       "v4v6",
 		APN:             "",
 		Source:          "auto",
 	}
 }
 
-// NormalizeCardPolicy 仅做字段归一（trim ICCID、空 ip 归一为 v4）。
+// NormalizeCardPolicy 仅做字段归一（trim ICCID、空 ip 归一为 v4v6 双栈）。
 func NormalizeCardPolicy(p *CardPolicy) {
 	if p == nil {
 		return
@@ -45,7 +46,7 @@ func NormalizeCardPolicy(p *CardPolicy) {
 	case "v4", "v6", "v4v6":
 		p.IPVersion = strings.TrimSpace(p.IPVersion)
 	default:
-		p.IPVersion = "v4"
+		p.IPVersion = "v4v6"
 	}
 }
 

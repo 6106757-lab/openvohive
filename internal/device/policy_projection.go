@@ -19,7 +19,7 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.AirplaneEnabled = p.AirplaneEnabled
 	w.Config.IPVersion = strings.TrimSpace(p.IPVersion)
 	if w.Config.IPVersion == "" {
-		w.Config.IPVersion = "v4"
+		w.Config.IPVersion = "v4v6"
 	}
 	w.Config.APN = strings.TrimSpace(p.APN)
 	w.Config.SMSEnabled = true // SMS 恒开

@@ -30,7 +30,7 @@ type offlineDevicePolicy struct {
 // device → 当前 ICCID → card_policies。无 ICCID 或无策略记录时返回安全默认。
 // SMS 恒为启用（写死系统语义），与 card_policies 无关。
 func resolveOfflineDevicePolicy(deviceID string) offlineDevicePolicy {
-	out := offlineDevicePolicy{SMSEnabled: true, IPVersion: "v4"}
+	out := offlineDevicePolicy{SMSEnabled: true, IPVersion: "v4v6"}
 	iccid := db.CurrentICCIDForDevice(deviceID)
 	if iccid == "" {
 		return out
